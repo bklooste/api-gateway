@@ -70,7 +70,7 @@ services:
 
   test-mockserver:
     hostname: test-mockserver
-    image: ghcr.io/bklooste/mockserver:mockserver-5.15.0
+    image: mockserver/mockserver:5.15.0
     environment:
       - MOCKSERVER_LOG_LEVEL=${MOCKSERVER_LOG_LEVEL:-WARN}
     command: -serverPort 1090 -logLevel ${MOCKSERVER_LOG_LEVEL:-WARN}

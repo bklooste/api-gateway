@@ -47,7 +47,7 @@ services:
   # /api/v1/slow echoes the time it generated the response, so a cached reply (identical timestamp)
   # is easy to tell from a fresh one.
   upstream:
-    image: ghcr.io/bklooste/mockserver:mockserver-5.15.0
+    image: mockserver/mockserver:5.15.0
     volumes:
       - ./quickstart/mockserver-expectations.json:/expectations.json:ro
     environment:
