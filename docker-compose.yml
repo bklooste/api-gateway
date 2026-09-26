@@ -9,7 +9,6 @@
 services:
   gateway:
     image: ghcr.io/bklooste/api-gateway/gateway:latest
-    build: .                # builds from this checkout; delete this line to pull the published image
     ports:
       - "8080:8080"
     volumes:
