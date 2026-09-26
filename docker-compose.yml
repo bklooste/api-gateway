@@ -28,7 +28,7 @@ services:
   # The optional cache. Routes opt in per-route via "Cache" in routes.json; without it the gateway
   # proxies directly and this container is never touched.
   cache:
-    image: ghcr.io/bklooste/http-rediscache/cache:0.1.1
+    image: ghcr.io/bklooste/http-rediscache/cache:latest
     environment:
       ConnectionStrings__Redis: redis:6379
     depends_on:
