@@ -1,0 +1,44 @@
+{
+  // Where the gateway can forward to. Names here are referenced by ProxyName below.
+  "EndPoints": {
+    "upstream": "http://upstream:1090/api/",
+    "cache": "http://cache:8080/"
+  },
+
+  "proxyConfig": [
+    // Plain proxy. Requires the caller to hold the "events-r" scope.
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/events",
+      "ProxyUrl": "v1/events",
+      "AnyScopesPredicate": [ "events-r" ]
+    },
+
+    // Same upstream, but routed through http-rediscache. The cache key includes the "brand"
+    // query parameter, so different brands get different entries.
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/slow",
+      "ProxyUrl": "v1/slow",
+      "AnyScopesPredicate": [ "events-r" ],
+      "Cache": { "CacheVars": [ "brand" ], "TtlSeconds": 30 }
+    },
+
+    // Path rewriting: callers see /v1/me/profile, the backend serves /v1/users/{id}/profile.
+    // {userId} comes from the trusted userid header, never from the caller's input.
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/me/profile",
+      "ProxyUrl": "v1/users/{userId}/profile",
+      "AnyScopesPredicate": [ "profile-r" ]
+    },
+
+    // Admin route, gated on a scope the quickstart caller does not hold — try it to see a 403.
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/admin/settings",
+      "ProxyUrl": "v1/admin/settings",
+      "AllScopesPredicate": [ "admin" ]
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+# End-to-end stack for the standalone gateway: the gateway container, the real cache container
+# (ghcr.io/bklooste/http-rediscache) with its Redis, and a MockServer standing in for upstreams.
+#
+# The cache is a published public image, so it is exercised for real here rather than mocked.
+#
+#   docker compose -f test.compose.yml up --build --abort-on-container-exit --exit-code-from tst
+#
+# The route table is mounted at /config/routes.json, layered on top of the image's own
+# appsettings.json rather than replacing it. A DIRECTORY is mounted, not a single file, so that a
+# replace-by-rename is visible inside the container — which is how Kubernetes updates a ConfigMap,
+# and what RouteReloadTests exercises.
+
+services:
+  tst:
+    build:
+      context: ../..
+      dockerfile: tst/ApiGateway.Tests/Dockerfile
+    depends_on:
+      gateway:
+        condition: service_started
+      test-mockserver:
+        condition: service_started
+    environment:
+      - GatewayHttpUrl=http://gateway:8080
+      - MockServerBaseUri=http://test-mockserver:1090
+      - RouteFilePath=/config/routes.json
+    # Runs as the host user so the test can rewrite the bind-mounted route file, and so the files
+    # it leaves behind are not root-owned on the host.
+    user: "${DOCKER_UID:-1000}:${DOCKER_GID:-1000}"
+    volumes:
+      - ./routes:/config
+    entrypoint:
+      - ./ApiGateway.Tests
+      - -trx
+      - /tmp/results.trx
+
+  gateway:
+    build:
+      context: ../..
+    depends_on:
+      cache:
+        condition: service_started
+      test-mockserver:
+        condition: service_started
+    volumes:
+      - ./routes:/config:ro
+    environment:
+      - ASPNETCORE_HTTP_PORTS=8080
+      - DOTNET_Logging__LogLevel__Default=Debug
+      - DOTNET_EndPoints__cache=http://cache:8080/
+      - DOTNET_EndPoints__upstream=http://test-mockserver:1090/upstream/
+      # No OTEL_EXPORTER_OTLP_ENDPOINT: the exporters stay inert, proving the container
+      # runs without a collector.
+      - OTEL_SERVICE_NAME=api-gateway-test
+    # No healthcheck: the chiseled runtime image has no shell or curl. The test polls
+    # /health/ready itself before the first assertion.
+
+  cache:
+    image: ghcr.io/bklooste/http-rediscache/cache:0.1.1
+    depends_on:
+      redis-cache:
+        condition: service_started
+    environment:
+      - ConnectionStrings__Redis=redis-cache:6379,abortConnect=false
+      - ASPNETCORE_HTTP_PORTS=8080
+
+  redis-cache:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+  test-mockserver:
+    hostname: test-mockserver
+    image: ghcr.io/bklooste/mockserver:mockserver-5.15.0
+    environment:
+      - MOCKSERVER_LOG_LEVEL=${MOCKSERVER_LOG_LEVEL:-WARN}
+    command: -serverPort 1090 -logLevel ${MOCKSERVER_LOG_LEVEL:-WARN}

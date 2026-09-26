@@ -1,0 +1,39 @@
+[
+  {
+    "httpRequest": {
+      "path": "/api/v1/events"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": "{\"events\":[{\"id\":\"e1\",\"name\":\"Demo Event\"}]}"
+    }
+  },
+  {
+    "httpRequest": {
+      "path": "/api/v1/users/user-42/profile"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "content-type": [
+          "application/json"
+        ]
+      },
+      "body": "{\"userId\":\"user-42\",\"tier\":\"gold\"}"
+    }
+  },
+  {
+    "httpRequest": {
+      "path": "/api/v1/slow"
+    },
+    "httpResponseTemplate": {
+      "templateType": "VELOCITY",
+      "template": "{ 'statusCode': 200, 'headers': { 'content-type': [ 'application/json' ] }, 'body': \"{ \\\"generatedAt\\\": \\\"$now_iso_8601\\\" }\" }"
+    }
+  }
+]

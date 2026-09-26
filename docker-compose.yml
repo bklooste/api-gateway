@@ -1,0 +1,56 @@
+# Quick start:  docker compose up -d      (then follow the walkthrough in the README)
+#
+# Runs the gateway with everything it can talk to:
+#   - upstream : MockServer, standing in for your backend services
+#   - cache    : http-rediscache, the optional cache routes can opt into
+#
+# Routes come from ./config/routes.json, mounted at /config. Edit that file while the stack is
+# running and the gateway picks it up within a few seconds — no restart, no rebuild.
+services:
+  gateway:
+    image: ghcr.io/bklooste/api-gateway/gateway:latest
+    build: .                # builds from this checkout; delete this line to pull the published image
+    ports:
+      - "8080:8080"
+    volumes:
+      # A DIRECTORY, not a single file: a single-file bind mount pins the inode and would never
+      # see an edit that replaces the file — which is exactly how Kubernetes updates a ConfigMap.
+      - ./config:/config:ro
+    environment:
+      # Everything in routes.json can also be set here; env vars win.
+      # OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4317
+      OTEL_SERVICE_NAME: api-gateway
+    depends_on:
+      upstream:
+        condition: service_started
+      cache:
+        condition: service_started
+
+  # The optional cache. Routes opt in per-route via "Cache" in routes.json; without it the gateway
+  # proxies directly and this container is never touched.
+  cache:
+    image: ghcr.io/bklooste/http-rediscache/cache:0.1.1
+    environment:
+      ConnectionStrings__Redis: redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  # Stands in for your backend services. Expectations are loaded from a mounted file at startup:
+  # /api/v1/slow echoes the time it generated the response, so a cached reply (identical timestamp)
+  # is easy to tell from a fresh one.
+  upstream:
+    image: ghcr.io/bklooste/mockserver:mockserver-5.15.0
+    volumes:
+      - ./quickstart/mockserver-expectations.json:/expectations.json:ro
+    environment:
+      MOCKSERVER_INITIALIZATION_JSON_PATH: /expectations.json
+      MOCKSERVER_LOG_LEVEL: WARN
+    command: -serverPort 1090 -logLevel WARN

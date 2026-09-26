@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/ApiGateway/ApiGateway.csproj" />
+  </Folder>
+  <Folder Name="/tst/">
+    <Project Path="tst/ApiGateway.Tests/ApiGateway.Tests.csproj" />
+  </Folder>
+</Solution>

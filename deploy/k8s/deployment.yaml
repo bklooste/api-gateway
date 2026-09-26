@@ -1,0 +1,111 @@
+# Reference deployment. The image is generic — everything that differs between instances is in the
+# ConfigMap below, so one image serves every gateway you run (public API, admin API, ...).
+#
+#   kubectl apply -f deployment.yaml
+#
+# Deliberately ClusterIP with no Ingress: the gateway authorizes but does not authenticate, so it
+# must only ever be reached through the authenticating edge proxy. See the README trust model.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: api-gateway-routes
+data:
+  routes.json: |
+    {
+      "EndPoints": {
+        "offers": "http://offers:8080/",
+        "cache": "http://http-rediscache:8080/"
+      },
+      "proxyConfig": [
+        {
+          "ProxyName": "offers",
+          "ApiUrl": "v3/nav",
+          "ProxyUrl": "v3/event/nav",
+          "AnyScopesPredicate": [ "events-r" ],
+          "Cache": { "CacheVars": [ "brand" ], "TtlSeconds": 60 }
+        }
+      ]
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      containers:
+      - name: api-gateway
+        image: ghcr.io/bklooste/api-gateway/gateway:0.1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        # Per-environment overrides. Anything in routes.json can be set here; env vars win.
+        - name: OTEL_SERVICE_NAME
+          value: api-gateway
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "http://otel-collector.observability:4317"
+        - name: OTEL_EXPORTER_OTLP_PROTOCOL
+          value: grpc
+        volumeMounts:
+        # Mounted as a DIRECTORY. Kubernetes updates a ConfigMap by swapping the ..data symlink;
+        # a subPath mount of the single file would pin the old inode and never see an update.
+        # Edit the ConfigMap and the gateway reloads within a minute or so, without a restart.
+        - name: routes
+          mountPath: /config
+          readOnly: true
+        resources:
+          requests:
+            memory: "96Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 15
+          failureThreshold: 5
+        securityContext:
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ "ALL" ]
+      volumes:
+      - name: routes
+        configMap:
+          name: api-gateway-routes
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  selector:
+    app: api-gateway
+  ports:
+  - port: 8080
+    targetPort: 8080
+    name: http
+  type: ClusterIP

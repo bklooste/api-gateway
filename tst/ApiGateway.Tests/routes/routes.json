@@ -1,0 +1,30 @@
+{
+  "EndPoints": {
+    "upstream": "http://test-mockserver:1090/upstream/",
+    "cache": "http://cache:8080/"
+  },
+  "proxyConfig": [
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/event",
+      "ProxyUrl": "v1/event",
+      "AnyScopesPredicate": [
+        "events-r"
+      ]
+    },
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/nav",
+      "ProxyUrl": "v1/nav",
+      "AnyScopesPredicate": [
+        "events-r"
+      ],
+      "Cache": {
+        "CacheVars": [
+          "brand"
+        ],
+        "TtlSeconds": 60
+      }
+    }
+  ]
+}
