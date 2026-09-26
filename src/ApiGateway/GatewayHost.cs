@@ -92,6 +92,9 @@ public static class GatewayHost
         // Liveness and readiness are mapped before the catch-all so the proxy never swallows them.
         app.MapHealthChecks("/health/live", new() { Predicate = _ => false });
         app.MapHealthChecks("/health/ready");
+        // Bare /health is the platform-wide convention (test harnesses, compose healthchecks, older probes all poll
+        // it), and without it the catch-all proxy answers 404. Same meaning as readiness.
+        app.MapHealthChecks("/health");
 
         app.MapOpenApi("/swagger/{documentName}/swagger.json");
 

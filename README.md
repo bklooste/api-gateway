@@ -235,7 +235,7 @@ serves writes is not cached by accident.
 Traces, metrics and logs are exported over OTLP, configured entirely by the standard environment
 variables (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`). With no
 endpoint set the exporters stay inert and the container runs normally. Health probes are excluded
-from traces. `/health/live` and `/health/ready` are mapped ahead of the catch-all route.
+from traces. `/health/live`, `/health/ready` and a bare `/health` (same as ready) are mapped ahead of the catch-all route.
 
 ## Tests
 
