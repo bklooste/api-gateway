@@ -164,8 +164,19 @@ A minimal route table:
 ```
 
 `ApiUrl` matches as a prefix and `{param}` segments are wildcards, carried across to `ProxyUrl`.
-Scope predicates support the placeholders `{userId}`, `{brand}` and `{resource:Prop}`, the last
-resolved by fetching the target resource first (see `ResourceAuth`).
+`ProxyUrl` may also use `{userId}` and `{brand}`, filled from the identity headers (a `{brand}` path
+parameter in `ApiUrl` takes precedence).
+
+Scope predicates support the placeholders `{userId}`, `{brand}`, `{path:name}` and `{resource:Prop}`.
+`{path:name}` is the request's value for the `{name}` segment of `ApiUrl`, so a route can gate on the
+resource named in the URL, e.g. `"AnyScopesPredicate": ["brand-r:{path:brand}", "brand-r:*"]` on
+`v1/admin/brand/{brand}`. `{resource:Prop}` is resolved by fetching the target resource first (see `ResourceAuth`).
+
+The gateway sets the `brand`, `customerId` and `userId` query parameters from the identity headers,
+overwriting any the caller sent. `gateway:identityQueryParams` narrows that set; a name left out is passed
+through as sent. Leave it at the default unless every route using that parameter authorizes it itself.
+
+Successful responses are streamed back with their `Content-Type` and `Content-Disposition`.
 
 ## Where this sits
 
@@ -186,7 +197,7 @@ setting these headers on the request it forwards. The gateway reads them and tru
 | ------------------- | ------------------------------------------ | ------------------------------------------------- |
 | `auth-claim-scopes` | The user's granted scopes, comma-separated | Every `AnyScopesPredicate` / `AllScopesPredicate` check |
 | `userid`            | The user's id                              | The `{userId}` placeholder, in scopes and `ProxyUrl` |
-| `brand`             | The user's brand/tenant                    | The `{brand}` placeholder in scope predicates      |
+| `brand`             | The user's brand/tenant                    | The `{brand}` placeholder, in scopes and `ProxyUrl` |
 
 So a caller granted `events-r` and `bet-w` arrives at the gateway as:
 

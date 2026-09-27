@@ -26,6 +26,14 @@ public sealed class GatewayOptions
     /// it discloses the trusted headers and belongs behind an explicit opt-in, never on in production.
     /// </summary>
     public bool EnableDebugEndpoint { get; init; }
+
+    /// <summary>
+    /// Query parameters the gateway sets from the identity headers, overwriting any the caller sent:
+    /// <c>brand</c> from the brand header, <c>customerId</c> and <c>userId</c> from the user-id header.
+    /// A name left out is passed through as the caller sent it. Narrow this only where the routes
+    /// authorize that parameter themselves (e.g. an admin gateway whose routes check the brand in scope).
+    /// </summary>
+    public string[] IdentityQueryParams { get; init; } = [.. QueryStrings.DefaultIdentityParams];
 }
 
 /// <summary>

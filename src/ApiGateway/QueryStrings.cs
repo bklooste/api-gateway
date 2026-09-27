@@ -6,14 +6,16 @@ namespace ApiGateway;
 
 internal static class QueryStrings
 {
-    /// <summary>Query parameters derived from the trusted identity headers; a client may not supply them.</summary>
-    private static readonly HashSet<string> TrustedParams =
-        new(["brand", "customerId", "userId"], StringComparer.OrdinalIgnoreCase);
+    /// <summary>Default query parameters derived from the trusted identity headers; a client may not supply them.</summary>
+    internal static readonly string[] DefaultIdentityParams = ["brand", "customerId", "userId"];
 
     // Parses the raw query (preserving duplicates), explodes comma-separated values (Swagger's non-exploded
     // array style) into repeated keys for the downstream string[] binder, then appends brand/customerId/userId.
-    internal static (string Key, string? Value)[] GetQueryString(HttpRequest request, string? brand, string? userId)
+    internal static (string Key, string? Value)[] GetQueryString(HttpRequest request, string? brand, string? userId, IReadOnlyCollection<string>? identityParams = null)
     {
+        identityParams ??= DefaultIdentityParams;
+        bool Identity(string key) => identityParams.Contains(key, StringComparer.OrdinalIgnoreCase);
+
         var queryString = new List<(string, string?)>();
 
         if (request.QueryString.HasValue)
@@ -43,14 +45,20 @@ internal static class QueryStrings
         // values forwarded, theirs first — and a downstream binder taking the first match would bind
         // the attacker's. That is the same duplicate-value hazard CopyRequest guards against for
         // identity headers; the query string had the opposite behaviour.
-        queryString.RemoveAll(x => TrustedParams.Contains(x.Item1));
+        //
+        // A deployment can narrow the set (gateway:identityQueryParams). The admin gateway leaves "brand" out,
+        // because an admin picks the brand they act on; its routes gate that brand with a {path:brand}
+        // or brand-scoped predicate instead.
+        queryString.RemoveAll(x => Identity(x.Item1));
 
-        if (brand != null)
+        if (brand != null && Identity("brand"))
             queryString.Add(("brand", brand));
         if (userId != null)
         {
-            queryString.Add(("customerId", userId));
-            queryString.Add(("userId", userId));
+            if (Identity("customerId"))
+                queryString.Add(("customerId", userId));
+            if (Identity("userId"))
+                queryString.Add(("userId", userId));
         }
 
         return [.. queryString];
