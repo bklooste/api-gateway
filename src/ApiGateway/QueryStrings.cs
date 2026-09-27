@@ -6,15 +6,14 @@ namespace ApiGateway;
 
 internal static class QueryStrings
 {
-    /// <summary>Default query parameters derived from the trusted identity headers; a client may not supply them.</summary>
-    internal static readonly string[] DefaultIdentityParams = ["brand", "customerId", "userId"];
-
     // Parses the raw query (preserving duplicates), explodes comma-separated values (Swagger's non-exploded
-    // array style) into repeated keys for the downstream string[] binder, then appends brand/customerId/userId.
-    internal static (string Key, string? Value)[] GetQueryString(HttpRequest request, string? brand, string? userId, IReadOnlyCollection<string>? identityParams = null)
+    // array style) into repeated keys for the downstream string[] binder, then sets userId (and brand) from
+    // the identity headers.
+    internal static (string Key, string? Value)[] GetQueryString(HttpRequest request, string? brand, string? userId, bool overwriteBrand = true)
     {
-        identityParams ??= DefaultIdentityParams;
-        bool Identity(string key) => identityParams.Contains(key, StringComparer.OrdinalIgnoreCase);
+        bool Identity(string key) =>
+            key.Equals("userId", StringComparison.OrdinalIgnoreCase)
+            || (overwriteBrand && key.Equals("brand", StringComparison.OrdinalIgnoreCase));
 
         var queryString = new List<(string, string?)>();
 
@@ -46,20 +45,16 @@ internal static class QueryStrings
         // the attacker's. That is the same duplicate-value hazard CopyRequest guards against for
         // identity headers; the query string had the opposite behaviour.
         //
-        // A deployment can narrow the set (gateway:identityQueryParams). The admin gateway leaves "brand" out,
-        // because an admin picks the brand they act on; its routes gate that brand with a {path:brand}
-        // or brand-scoped predicate instead.
+        // customerId is an ordinary parameter (e.g. the customer an admin is looking at) and passes through
+        // untouched; a service must key the caller's own data on userId. The admin gateway turns brand
+        // overwriting off (gateway:overwriteBrandQueryParam), because an admin picks the brand they act on
+        // and its routes gate that brand with a {path:brand} or brand-scoped predicate instead.
         queryString.RemoveAll(x => Identity(x.Item1));
 
-        if (brand != null && Identity("brand"))
+        if (brand != null && overwriteBrand)
             queryString.Add(("brand", brand));
         if (userId != null)
-        {
-            if (Identity("customerId"))
-                queryString.Add(("customerId", userId));
-            if (Identity("userId"))
-                queryString.Add(("userId", userId));
-        }
+            queryString.Add(("userId", userId));
 
         return [.. queryString];
     }

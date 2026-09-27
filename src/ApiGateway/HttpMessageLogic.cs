@@ -105,7 +105,7 @@ public class HttpMessageLogic
             ? proxy.GetHttpClient(CacheServiceName)
             : proxy.GetHttpClient(configEntry.ProxyName);
         // Comma-separated values are exploded into repeated keys so the downstream string[] binder works.
-        var queryParams = QueryStrings.GetQueryString(request, brand, userId, _options.IdentityQueryParams);
+        var queryParams = QueryStrings.GetQueryString(request, brand, userId, _options.OverwriteBrandQueryParam);
         var url = QueryStrings.AddQueryParams(slug, queryParams);
         url = RewriteUrl(url, configEntry.ApiUrl, configEntry.ProxyUrl, userId.ToString(), brand.ToString());
 

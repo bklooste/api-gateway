@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace ApiGateway.Tests;
 
 /// <summary>
-/// {brand} in ProxyUrl, {path:name} scope placeholders, the configurable identity query params,
+/// {brand} in ProxyUrl, {path:name} scope placeholders, the identity query params,
 /// and Content-Disposition passing through on downloads.
 /// </summary>
 public class RouteFeatureTests
@@ -57,15 +57,19 @@ public class RouteFeatureTests
     }
 
     [Fact]
-    public async Task Identity_query_params_overwrite_the_caller_by_default()
-        => Assert.Equal("http://svc:8080/v1/a?x=1&brand=acme&customerId=u1&userId=u1", await ForwardedUrl(new GatewayOptions()));
+    public async Task UserId_and_brand_are_set_from_the_headers_and_customerId_passes_through()
+        => Assert.Equal("http://svc:8080/v1/a?customerId=victim&x=1&brand=acme&userId=u1", await ForwardedUrl(new GatewayOptions()));
 
     [Fact]
-    public async Task A_param_left_out_of_the_identity_set_passes_through_as_sent()
-        => Assert.Equal("http://svc:8080/v1/a?brand=other&x=1&customerId=u1&userId=u1",
-            await ForwardedUrl(new GatewayOptions { IdentityQueryParams = ["customerId", "userId"] }));
+    public async Task With_brand_overwriting_off_the_callers_brand_passes_through()
+        => Assert.Equal("http://svc:8080/v1/a?brand=other&customerId=victim&x=1&userId=u1",
+            await ForwardedUrl(new GatewayOptions { OverwriteBrandQueryParam = false }));
 
-    private static async Task<string?> ForwardedUrl(GatewayOptions options)
+    [Fact]
+    public async Task A_caller_cannot_choose_the_userId()
+        => Assert.Equal("http://svc:8080/v1/a?x=1&brand=acme&userId=u1", await ForwardedUrl(new GatewayOptions(), "?userId=victim&x=1"));
+
+    private static async Task<string?> ForwardedUrl(GatewayOptions options, string query = "?brand=other&customerId=victim&x=1")
     {
         string? forwarded = null;
         var (logic, _, _) = Build(new()
@@ -76,7 +80,7 @@ public class RouteFeatureTests
         var context = new DefaultHttpContext();
         context.Request.Method = "GET";
         context.Request.Path = "/v1/a";
-        context.Request.QueryString = new QueryString("?brand=other&customerId=victim&x=1");
+        context.Request.QueryString = new QueryString(query);
         context.Request.Headers["brand"] = "acme";
         context.Request.Headers["userid"] = "u1";
 

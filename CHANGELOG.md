@@ -10,8 +10,16 @@ All notable changes to this project are documented here. The format follows
 
 - `{brand}` in `ProxyUrl`, filled from the brand header like `{userId}`.
 - `{path:name}` scope placeholder: the request's value for the `{name}` segment of `ApiUrl`.
-- `gateway:identityQueryParams`: which of `brand`/`customerId`/`userId` the gateway sets from the identity
-  headers (default: all three). An admin deployment can leave `brand` to the caller.
+- `gateway:overwriteBrandQueryParam` (default `true`): turn off on an admin deployment so the caller's
+  `?brand=` reaches the backend instead of being replaced with the admin's own brand.
+
+### Changed
+
+- **Breaking:** the gateway no longer sets a `customerId` query parameter (it only sets `userId` and `brand`),
+  and a caller-sent `customerId` now passes through as an ordinary parameter. Backends must use `userId` for
+  the caller's identity.
+- **Breaking:** `customerid` is no longer in the default `gateway:headers:forwardedIdentityHeaders`. The
+  authenticating proxy is expected neither to produce nor to pass it on.
 
 ### Fixed
 

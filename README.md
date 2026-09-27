@@ -172,9 +172,11 @@ Scope predicates support the placeholders `{userId}`, `{brand}`, `{path:name}` a
 resource named in the URL, e.g. `"AnyScopesPredicate": ["brand-r:{path:brand}", "brand-r:*"]` on
 `v1/admin/brand/{brand}`. `{resource:Prop}` is resolved by fetching the target resource first (see `ResourceAuth`).
 
-The gateway sets the `brand`, `customerId` and `userId` query parameters from the identity headers,
-overwriting any the caller sent. `gateway:identityQueryParams` narrows that set; a name left out is passed
-through as sent. Leave it at the default unless every route using that parameter authorizes it itself.
+The gateway sets the `userId` query parameter from the user-id header and the `brand` query parameter from
+the brand header, overwriting any the caller sent. Backends must key the caller's own data on `userId`.
+Any other parameter, `customerId` included, is the caller's and passes through as sent (e.g. the customer an
+admin is looking at). `gateway:overwriteBrandQueryParam: false` lets the caller's `brand` through too, for an
+admin gateway whose routes authorize the brand themselves (`brand-r:{path:brand}`).
 
 Successful responses are streamed back with their `Content-Type` and `Content-Disposition`.
 
