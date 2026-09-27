@@ -164,8 +164,21 @@ A minimal route table:
 ```
 
 `ApiUrl` matches as a prefix and `{param}` segments are wildcards, carried across to `ProxyUrl`.
-Scope predicates support the placeholders `{userId}`, `{brand}` and `{resource:Prop}`, the last
-resolved by fetching the target resource first (see `ResourceAuth`).
+`ProxyUrl` may also use `{userId}` and `{brand}`, filled from the identity headers (a `{brand}` path
+parameter in `ApiUrl` takes precedence).
+
+Scope predicates support the placeholders `{userId}`, `{brand}`, `{path:name}` and `{resource:Prop}`.
+`{path:name}` is the request's value for the `{name}` segment of `ApiUrl`, so a route can gate on the
+resource named in the URL, e.g. `"AnyScopesPredicate": ["brand-r:{path:brand}", "brand-r:*"]` on
+`v1/admin/brand/{brand}`. `{resource:Prop}` is resolved by fetching the target resource first (see `ResourceAuth`).
+
+The gateway sets the `userId` query parameter from the user-id header and the `brand` query parameter from
+the brand header, overwriting any the caller sent. Backends must key the caller's own data on `userId`.
+Any other parameter, `customerId` included, is the caller's and passes through as sent (e.g. the customer an
+admin is looking at). `gateway:overwriteBrandQueryParam: false` lets the caller's `brand` through too, for an
+admin gateway whose routes authorize the brand themselves (`brand-r:{path:brand}`).
+
+Successful responses are streamed back with their `Content-Type` and `Content-Disposition`.
 
 ## Where this sits
 
@@ -186,7 +199,7 @@ setting these headers on the request it forwards. The gateway reads them and tru
 | ------------------- | ------------------------------------------ | ------------------------------------------------- |
 | `auth-claim-scopes` | The user's granted scopes, comma-separated | Every `AnyScopesPredicate` / `AllScopesPredicate` check |
 | `userid`            | The user's id                              | The `{userId}` placeholder, in scopes and `ProxyUrl` |
-| `brand`             | The user's brand/tenant                    | The `{brand}` placeholder in scope predicates      |
+| `brand`             | The user's brand/tenant                    | The `{brand}` placeholder, in scopes and `ProxyUrl` |
 
 So a caller granted `events-r` and `bet-w` arrives at the gateway as:
 

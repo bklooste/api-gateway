@@ -26,6 +26,13 @@ public sealed class GatewayOptions
     /// it discloses the trusted headers and belongs behind an explicit opt-in, never on in production.
     /// </summary>
     public bool EnableDebugEndpoint { get; init; }
+
+    /// <summary>
+    /// The gateway always sets the <c>userId</c> query parameter from the user-id header, and by default the
+    /// <c>brand</c> query parameter from the brand header, overwriting any the caller sent. Turn this off where
+    /// the caller legitimately chooses the brand (an admin gateway) and every route that uses it authorizes it.
+    /// </summary>
+    public bool OverwriteBrandQueryParam { get; init; } = true;
 }
 
 /// <summary>
@@ -61,7 +68,7 @@ public sealed class GatewayHeaderNames
     /// exact-match lookups downstream. <see cref="Scopes"/>, <see cref="UserId"/> and
     /// <see cref="Brand"/> are always included.
     /// </summary>
-    public string[] ForwardedIdentityHeaders { get; init; } = ["customerid", "usertype", "auth-claim-brand"];
+    public string[] ForwardedIdentityHeaders { get; init; } = ["usertype", "auth-claim-brand"];
 
     private IReadOnlySet<string>? _allIdentityHeaders;
 

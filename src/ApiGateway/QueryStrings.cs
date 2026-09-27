@@ -6,14 +6,15 @@ namespace ApiGateway;
 
 internal static class QueryStrings
 {
-    /// <summary>Query parameters derived from the trusted identity headers; a client may not supply them.</summary>
-    private static readonly HashSet<string> TrustedParams =
-        new(["brand", "customerId", "userId"], StringComparer.OrdinalIgnoreCase);
-
     // Parses the raw query (preserving duplicates), explodes comma-separated values (Swagger's non-exploded
-    // array style) into repeated keys for the downstream string[] binder, then appends brand/customerId/userId.
-    internal static (string Key, string? Value)[] GetQueryString(HttpRequest request, string? brand, string? userId)
+    // array style) into repeated keys for the downstream string[] binder, then sets userId (and brand) from
+    // the identity headers.
+    internal static (string Key, string? Value)[] GetQueryString(HttpRequest request, string? brand, string? userId, bool overwriteBrand = true)
     {
+        bool Identity(string key) =>
+            key.Equals("userId", StringComparison.OrdinalIgnoreCase)
+            || (overwriteBrand && key.Equals("brand", StringComparison.OrdinalIgnoreCase));
+
         var queryString = new List<(string, string?)>();
 
         if (request.QueryString.HasValue)
@@ -43,15 +44,17 @@ internal static class QueryStrings
         // values forwarded, theirs first — and a downstream binder taking the first match would bind
         // the attacker's. That is the same duplicate-value hazard CopyRequest guards against for
         // identity headers; the query string had the opposite behaviour.
-        queryString.RemoveAll(x => TrustedParams.Contains(x.Item1));
+        //
+        // customerId is an ordinary parameter (e.g. the customer an admin is looking at) and passes through
+        // untouched; a service must key the caller's own data on userId. The admin gateway turns brand
+        // overwriting off (gateway:overwriteBrandQueryParam), because an admin picks the brand they act on
+        // and its routes gate that brand with a {path:brand} or brand-scoped predicate instead.
+        queryString.RemoveAll(x => Identity(x.Item1));
 
-        if (brand != null)
+        if (brand != null && overwriteBrand)
             queryString.Add(("brand", brand));
         if (userId != null)
-        {
-            queryString.Add(("customerId", userId));
             queryString.Add(("userId", userId));
-        }
 
         return [.. queryString];
     }

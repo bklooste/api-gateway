@@ -105,9 +105,9 @@ public class HttpMessageLogic
             ? proxy.GetHttpClient(CacheServiceName)
             : proxy.GetHttpClient(configEntry.ProxyName);
         // Comma-separated values are exploded into repeated keys so the downstream string[] binder works.
-        var queryParams = QueryStrings.GetQueryString(request, brand, userId);
+        var queryParams = QueryStrings.GetQueryString(request, brand, userId, _options.OverwriteBrandQueryParam);
         var url = QueryStrings.AddQueryParams(slug, queryParams);
-        url = RewriteUrl(url, configEntry.ApiUrl, configEntry.ProxyUrl, userId.ToString());
+        url = RewriteUrl(url, configEntry.ApiUrl, configEntry.ProxyUrl, userId.ToString(), brand.ToString());
 
         if (useCache)
         {
@@ -132,6 +132,10 @@ public class HttpMessageLogic
         request.HttpContext.Response.RegisterForDispose(response);
 
         var contentType = response.Content.Headers.ContentType?.ToString() ?? "text/plain";
+
+        // File downloads carry their name here; without it the client saves an unnamed file.
+        if (response.Content.Headers.ContentDisposition is { } disposition)
+            request.HttpContext.Response.Headers.ContentDisposition = disposition.ToString();
 
         if (response.IsSuccessStatusCode)
         {
@@ -230,6 +234,8 @@ public class HttpMessageLogic
                 r = r.Replace("{brand}", brand, StringComparison.OrdinalIgnoreCase);
             if (resourceKey != null)
                 r = r.Replace(resourceKey, resourceValue, StringComparison.OrdinalIgnoreCase);
+            if (r.Contains("{path:", StringComparison.OrdinalIgnoreCase))
+                r = SubstitutePathParameters(r, request.Path, configEntry.ApiUrl);
             return r;
         }
 
@@ -248,6 +254,25 @@ public class HttpMessageLogic
             return false;
 
         return true;
+    }
+
+    /// <summary>
+    /// Replaces <c>{path:name}</c> in a scope pattern with the request's value for the <c>{name}</c> segment of
+    /// <paramref name="apiUrlTemplate"/>, e.g. <c>brand-r:{path:brand}</c> on <c>v1/admin/brand/{brand}</c>.
+    /// Lets a route gate on the resource named in the URL (the brand being administered) rather than the caller's own.
+    /// An unknown name is left as-is, so the predicate cannot match by accident.
+    /// </summary>
+    public static string SubstitutePathParameters(string pattern, string requestPath, string apiUrlTemplate)
+    {
+        var pathSegments = requestPath.TrimStart('/').Split('/');
+        var templateSegments = apiUrlTemplate.TrimStart('/').Split('/');
+        for (int i = 0; i < Math.Min(templateSegments.Length, pathSegments.Length); i++)
+        {
+            var tmpl = templateSegments[i];
+            if (tmpl.StartsWith('{') && tmpl.EndsWith('}'))
+                pattern = pattern.Replace("{path:" + tmpl[1..^1] + "}", Uri.UnescapeDataString(pathSegments[i]), StringComparison.OrdinalIgnoreCase);
+        }
+        return pattern;
     }
 
     private async Task<string?> GetResourceAttributeAsync(Proxy proxy, ResourceAuth resourceAuth, string requestPath, string apiUrl, CancellationToken ct = default)
@@ -318,7 +343,7 @@ public class HttpMessageLogic
     ///      → "v1/bet/abc/cancel?q=1"
     /// Falls back to simple string replacement for non-parameterized routes.
     /// </summary>
-    public static string RewriteUrl(string url, string apiUrlTemplate, string proxyUrlTemplate, string? userId = null)
+    public static string RewriteUrl(string url, string apiUrlTemplate, string proxyUrlTemplate, string? userId = null, string? brand = null)
     {
         // Split off query string
         var qIndex = url.IndexOf('?');
@@ -349,6 +374,11 @@ public class HttpMessageLogic
         // Substitute {userId} from the identity header (enables e.g. ProxyUrl: "v1/user/{userId}/settings")
         if (!string.IsNullOrEmpty(userId))
             rewritten = rewritten.Replace("{userId}", Uri.EscapeDataString(userId));
+
+        // Same for {brand} (e.g. ProxyUrl: "v1/brand/{brand}"). A {brand} path parameter in ApiUrl was already
+        // substituted above, so this only fills a ProxyUrl-only {brand} from the trusted header.
+        if (!string.IsNullOrEmpty(brand))
+            rewritten = rewritten.Replace("{brand}", Uri.EscapeDataString(brand), StringComparison.OrdinalIgnoreCase);
 
         return rewritten + queryPart;
     }
