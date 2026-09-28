@@ -21,7 +21,7 @@ through a cache. Adding or changing a route is a config edit, not a deployment.
 What it does:
 
 - **Routes and rewrites** — prefix matching with `{param}` wildcards carried across to the backend path.
-- **Authorizes** — per-route scope predicates, with `{userId}`, `{brand}` and `{resource:Prop}`
+- **Authorizes** — per-route scope predicates, with `{userId}`, `{brand}`, `{path:name}`, `{query:name}` and `{resource:Prop}`
   placeholders. The last resolves by fetching the target resource first, so you can gate on who owns it.
 - **Caches** — routes opt in and are proxied via [http-rediscache](https://github.com/bklooste/http-rediscache).
 - **Merges OpenAPI** — pulls each backend's document and presents one combined spec under the
@@ -167,10 +167,24 @@ A minimal route table:
 `ProxyUrl` may also use `{userId}` and `{brand}`, filled from the identity headers (a `{brand}` path
 parameter in `ApiUrl` takes precedence).
 
-Scope predicates support the placeholders `{userId}`, `{brand}`, `{path:name}` and `{resource:Prop}`.
-`{path:name}` is the request's value for the `{name}` segment of `ApiUrl`, so a route can gate on the
-resource named in the URL, e.g. `"AnyScopesPredicate": ["brand-r:{path:brand}", "brand-r:*"]` on
-`v1/admin/brand/{brand}`. `{resource:Prop}` is resolved by fetching the target resource first (see `ResourceAuth`).
+Scope predicates support the placeholders `{userId}`, `{brand}`, `{path:name}`, `{query:name}` and
+`{resource:Prop}`. `{path:name}` is the request's value for the `{name}` segment of `ApiUrl` and
+`{query:name}` is its `?name=` value, so a route can gate on the resource named in the URL rather than on
+who the caller is, e.g. `"AnyScopesPredicate": ["brand-r:{path:brand}", "brand-r:*"]` on
+`v1/admin/brand/{brand}`, or `brand-r:{query:brand}` where the brand travels in the query string.
+That is safe only where the value is the one the downstream service acts on, so the check and the effect read
+a single input; use `{brand}` when the predicate is about the caller's own brand. `{resource:Prop}` is
+resolved by fetching the target resource first (see `ResourceAuth`).
+
+An unresolved placeholder keeps its braces and therefore denies — it is never substituted with an empty
+string, because a bare `brand-r:` scopes nothing and a caller can hold it. A `{query:name}` supplied **more
+than once** counts as unresolved: which repeat a service binds is its own business, so neither can be checked
+on its behalf.
+
+An `AllScopesPredicate` entry may offer alternatives as `"customers-r|customers-w"`. The two lists otherwise
+express exactly one OR group (`AnyScopesPredicate`) and one AND, so a route needing
+`(customers-r or customers-w) and (brand-r:{query:brand} or brand-r:*)` has one group too many: the brand
+group goes in `Any` and the other comes here as alternatives. `|` in an `Any` entry is not split.
 
 The gateway sets the `userId` query parameter from the user-id header and the `brand` query parameter from
 the brand header, overwriting any the caller sent. Backends must key the caller's own data on `userId`.

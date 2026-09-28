@@ -19,10 +19,16 @@ public record ProxyConfig
     /// <summary>Optional HTTP method (case-insensitive). Null matches any method.</summary>
     public string? Method { get; init; }
 
-    /// <summary>The caller needs at least one of these scopes. Placeholders: <c>{userId}</c>, <c>{brand}</c>, <c>{resource:Prop}</c>.</summary>
+    /// <summary>
+    /// The caller needs at least one of these scopes. Placeholders: <c>{userId}</c>, <c>{brand}</c>,
+    /// <c>{path:name}</c>, <c>{query:name}</c> and <c>{resource:Prop}</c>.
+    /// </summary>
     public string[]? AnyScopesPredicate { get; init; }
 
-    /// <summary>The caller needs every one of these scopes (same placeholders as <see cref="AnyScopesPredicate"/>).</summary>
+    /// <summary>
+    /// The caller needs every one of these scopes (same placeholders as <see cref="AnyScopesPredicate"/>).
+    /// An entry may offer alternatives as <c>"a|b"</c>; see <see cref="AuthorizationHelper.All"/>.
+    /// </summary>
     public string[]? AllScopesPredicate { get; init; }
 
     /// <summary>When set, only this top-level property of a successful JSON response is returned.</summary>

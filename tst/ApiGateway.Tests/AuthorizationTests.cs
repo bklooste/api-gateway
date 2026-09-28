@@ -22,6 +22,26 @@ public class AuthorizationTests
     }
 
     [Fact]
+    public void An_All_requirement_can_offer_alternatives()
+    {
+        // The two lists express one OR group (Any) and one AND (All), so a route needing a second OR
+        // group puts it here as "a|b".
+        Assert.True(new AuthorizationHelper(["customers-r"]).All("customers-r|customers-w"));
+        Assert.True(new AuthorizationHelper(["customers-w"]).All("customers-r|customers-w"));
+        Assert.False(new AuthorizationHelper(["customers-x"]).All("customers-r|customers-w"));
+
+        // Every requirement still has to be satisfied, alternatives or not.
+        Assert.True(new AuthorizationHelper(["customers-w", "admin"]).All("customers-r|customers-w", "admin"));
+        Assert.False(new AuthorizationHelper(["customers-w"]).All("customers-r|customers-w", "admin"));
+    }
+
+    [Fact]
+    public void A_pipe_in_an_Any_entry_is_not_split()
+        // Any already is the OR group. Splitting there too would mean a scope string that happened to
+        // contain the character silently matched something nobody granted.
+        => Assert.False(new AuthorizationHelper(["customers-r"]).Any("customers-r|customers-w"));
+
+    [Fact]
     public void An_empty_requirement_list_passes()
     {
         var helper = new AuthorizationHelper([]);

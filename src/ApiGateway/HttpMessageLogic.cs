@@ -236,6 +236,8 @@ public class HttpMessageLogic
                 r = r.Replace(resourceKey, resourceValue, StringComparison.OrdinalIgnoreCase);
             if (r.Contains("{path:", StringComparison.OrdinalIgnoreCase))
                 r = SubstitutePathParameters(r, request.Path, configEntry.ApiUrl);
+            if (r.Contains("{query:", StringComparison.OrdinalIgnoreCase))
+                r = SubstituteQueryParameters(r, request.Query);
             return r;
         }
 
@@ -271,6 +273,46 @@ public class HttpMessageLogic
             var tmpl = templateSegments[i];
             if (tmpl.StartsWith('{') && tmpl.EndsWith('}'))
                 pattern = pattern.Replace("{path:" + tmpl[1..^1] + "}", Uri.UnescapeDataString(pathSegments[i]), StringComparison.OrdinalIgnoreCase);
+        }
+        return pattern;
+    }
+
+    /// <summary>
+    /// Replaces <c>{query:name}</c> in a scope pattern with the request's <c>?name=</c> value, e.g.
+    /// <c>brand-r:{query:brand}</c> where the brand being administered travels in the query string rather than
+    /// the path. Same job as <see cref="SubstitutePathParameters"/>, and safe for the same reason: the value is
+    /// the one the downstream service acts on, so the check and the effect read a single input.
+    ///
+    /// A missing or empty value is left as-is, as is a parameter supplied <b>more than once</b> — which repeat a
+    /// service binds is its own business, so neither can be checked on its behalf. An unresolved placeholder
+    /// keeps its braces and so cannot match a granted scope; it must never collapse to an empty string, because
+    /// a bare <c>brand-r:</c> scopes nothing and a caller can hold it.
+    /// </summary>
+    public static string SubstituteQueryParameters(string pattern, IQueryCollection query)
+    {
+        const string open = "{query:";
+        var from = 0;
+        while (true)
+        {
+            var start = pattern.IndexOf(open, from, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+                break;
+            var nameStart = start + open.Length;
+            var end = pattern.IndexOf('}', nameStart);
+            if (end < 0)
+                break;
+
+            var values = query[pattern[nameStart..end]];
+            if (values.Count == 1 && !string.IsNullOrEmpty(values[0]))
+            {
+                var value = values[0]!;
+                pattern = pattern.Replace(pattern[start..(end + 1)], value, StringComparison.OrdinalIgnoreCase);
+                from = start + value.Length;
+            }
+            else
+            {
+                from = end + 1;
+            }
         }
         return pattern;
     }
