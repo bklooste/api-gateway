@@ -112,6 +112,31 @@ public class RouteFeatureTests
         Assert.Equal("attachment; filename=statement.csv", context.Response.Headers.ContentDisposition.ToString());
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.OK)]
+    [InlineData(HttpStatusCode.PreconditionFailed)]
+    public async Task The_etag_reaches_the_caller(HttpStatusCode status)
+    {
+        var downstream = new StubHandler(_ =>
+        {
+            var response = new HttpResponseMessage(status) { Content = new StringContent("{}") };
+            response.Headers.ETag = new EntityTagHeaderValue("\"4\"");
+            return response;
+        });
+        var (logic, _, _) = Build(new()
+        {
+            ["proxyConfig:0:ApiUrl"] = "v2/templates",
+            ["proxyConfig:0:ProxyUrl"] = "v2/templates",
+        }, downstream);
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.Path = "/v2/templates";
+
+        await logic.ProcessCall(context.Request, "v2/templates");
+
+        Assert.Equal("\"4\"", context.Response.Headers.ETag.ToString());
+    }
+
     private static (HttpMessageLogic, Proxy, ProxyConfig[]) Build(Dictionary<string, string?> route, HttpMessageHandler? handler = null, GatewayOptions? gatewayOptions = null)
     {
         route["EndPoints:svc"] = "http://svc:8080/";

@@ -137,6 +137,13 @@ public class HttpMessageLogic
         if (response.Content.Headers.ContentDisposition is { } disposition)
             request.HttpContext.Response.Headers.ContentDisposition = disposition.ToString();
 
+        // Cache validators: a client doing read-modify-write needs the ETag it will send back as If-Match
+        // (If-Match itself is forwarded with the other request headers).
+        if (response.Headers.ETag is { } etag)
+            request.HttpContext.Response.Headers.ETag = etag.ToString();
+        if (response.Content.Headers.LastModified is { } lastModified)
+            request.HttpContext.Response.Headers.LastModified = lastModified.ToString("R");
+
         if (response.IsSuccessStatusCode)
         {
             if (!string.IsNullOrEmpty(configEntry.ResponsePath))
