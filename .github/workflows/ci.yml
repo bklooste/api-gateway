@@ -80,6 +80,12 @@ jobs:
         with:
           fetch-depth: 0
 
+      # nbgv runs `dotnet tool install`, which honours global.json; without this the
+      # runner only has its preinstalled SDKs and the pinned .NET 11 preview is missing.
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
       - name: Compute version (Nerdbank.GitVersioning)
         id: nbgv
         uses: dotnet/nbgv@v0.4
