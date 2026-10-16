@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Self-contained: builds from this repo's own tree only. Nothing outside the build context is referenced.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:11.0-resolute AS build
 ARG TARGETARCH
 ARG VERSION=0.0.0
 WORKDIR /src
@@ -10,7 +10,7 @@ COPY . .
 RUN dotnet publish src/ApiGateway/ApiGateway.csproj -c Release -a $TARGETARCH \
       -p:Version=$VERSION -p:UseAppHost=false -o /app
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:11.0-resolute-chiseled AS runtime
 ARG VERSION=0.0.0
 ARG REVISION=unknown
 LABEL org.opencontainers.image.title="api-gateway" \

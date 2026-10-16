@@ -1,0 +1,25 @@
+{
+  "openapi": "3.2.0",
+  "info": { "title": "markets", "version": "1.0" },
+  "paths": {
+    "/v1/markets": {
+      "get": {
+        "tags": [ "Markets" ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Market" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Market": {
+        "type": "object",
+        "properties": { "label": { "type": [ "string", "null" ] } }
+      }
+    }
+  }
+}

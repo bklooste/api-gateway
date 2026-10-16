@@ -22,7 +22,8 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "10.0.x"
+          # .NET 11 SDK (preview); the exact band is pinned in global.json.
+          global-json-file: global.json
 
       - run: dotnet restore ApiGateway.slnx
       - run: dotnet build ApiGateway.slnx -c Release --no-restore

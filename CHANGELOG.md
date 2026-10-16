@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Reads downstream OpenAPI 3.0, 3.1 and 3.2 documents (Microsoft.OpenApi 3.x). Before, a 3.2 document
+  failed to load and that service's paths were missing from the merged document.
+- `gateway:openApi:outputVersion` (`3.0` | `3.1` | `3.2`, default `3.1`): the version the merged document is
+  emitted as. An unknown value fails startup.
 - `{brand}` in `ProxyUrl`, filled from the brand header like `{userId}`.
 - `{path:name}` scope placeholder: the request's value for the `{name}` segment of `ApiUrl`.
 - `gateway:overwriteBrandQueryParam` (default `true`): turn off on an admin deployment so the caller's
@@ -15,6 +19,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Breaking:** requires .NET 11 (`net11.0`, SDK pinned in `global.json`); the image is built on
+  `aspnet:11.0-resolute-chiseled`.
+- **Breaking:** the merged OpenAPI document is emitted as 3.1 by default instead of 3.0. Set
+  `gateway:openApi:outputVersion: "3.0"` to keep the old output.
 - **Breaking:** the gateway no longer sets a `customerId` query parameter (it only sets `userId` and `brand`),
   and a caller-sent `customerId` now passes through as an ordinary parameter. Backends must use `userId` for
   the caller's identity.
