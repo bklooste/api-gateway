@@ -24,8 +24,8 @@ What it does:
 - **Authorizes** — per-route scope predicates, with `{userId}`, `{brand}`, `{path:name}`, `{query:name}` and `{resource:Prop}`
   placeholders. The last resolves by fetching the target resource first, so you can gate on who owns it.
 - **Caches** — routes opt in and are proxied via [http-rediscache](https://github.com/bklooste/http-rediscache).
-- **Merges OpenAPI** — pulls each backend's document and presents one combined spec under the
-  client-facing paths.
+- **Merges OpenAPI** — pulls each backend's document (OpenAPI 3.0, 3.1 or 3.2) and presents one combined
+  spec under the client-facing paths, served at `/swagger/v1/swagger.json` in the configured version.
 - **Reloads live** — edit the mounted route file (or ConfigMap) and routing changes within seconds,
   no restart.
 
@@ -193,6 +193,21 @@ admin is looking at). `gateway:overwriteBrandQueryParam: false` lets the caller'
 admin gateway whose routes authorize the brand themselves (`brand-r:{path:brand}`).
 
 Successful responses are streamed back with their `Content-Type` and `Content-Disposition`.
+
+### Merged OpenAPI document
+
+The gateway reads each proxied service's `swagger/v1/swagger.json`, whether it is OpenAPI 3.0, 3.1 or 3.2,
+and serves the merged document at `/swagger/v1/swagger.json`. `gateway:openApi:outputVersion`
+(`DOTNET_gateway__openApi__outputVersion`) sets the version that document is emitted as:
+
+| Value          | Emits |
+| -------------- | ----- |
+| `3.1` (default) | OpenAPI 3.1.x. Keeps `type: [x, "null"]` and examples from 3.1/3.2 inputs as written. |
+| `3.0`          | OpenAPI 3.0.x, for consumers that cannot read 3.1. Lossy for 3.1/3.2-only constructs. |
+| `3.2`          | OpenAPI 3.2.x. Check your Swagger UI or client generator reads it first. |
+
+Any other value fails startup; there is no silent fallback. A downstream document that cannot be read
+(an unsupported version, malformed JSON, a timeout) is logged and left out, and the others still merge.
 
 ## Where this sits
 

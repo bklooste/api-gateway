@@ -33,6 +33,31 @@ public sealed class GatewayOptions
     /// the caller legitimately chooses the brand (an admin gateway) and every route that uses it authorizes it.
     /// </summary>
     public bool OverwriteBrandQueryParam { get; init; } = true;
+
+    /// <summary>Settings for the merged OpenAPI document the gateway serves.</summary>
+    public GatewayOpenApiOptions OpenApi { get; init; } = new();
+}
+
+/// <summary>Settings for the merged OpenAPI document, bound from <c>gateway:openApi</c>.</summary>
+public sealed class GatewayOpenApiOptions
+{
+    /// <summary>
+    /// OpenAPI version the merged document is emitted as: <c>3.0</c>, <c>3.1</c> (default) or <c>3.2</c>.
+    /// Downstream documents of any of these versions are read regardless. Any other value fails startup.
+    /// </summary>
+    public string OutputVersion { get; init; } = "3.1";
+
+    /// <summary>Maps <see cref="OutputVersion"/> to a spec version; false for an unknown value.</summary>
+    public static bool TryParseVersion(string? value, out Microsoft.OpenApi.OpenApiSpecVersion version)
+    {
+        switch (value?.Trim())
+        {
+            case "3.0": version = Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_0; return true;
+            case "3.1": version = Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_1; return true;
+            case "3.2": version = Microsoft.OpenApi.OpenApiSpecVersion.OpenApi3_2; return true;
+            default: version = default; return false;
+        }
+    }
 }
 
 /// <summary>

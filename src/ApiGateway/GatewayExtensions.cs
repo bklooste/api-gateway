@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.OpenApi;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,11 +21,18 @@ public static class GatewayExtensions
     /// </summary>
     public static IServiceCollection AddApiGateway(this IServiceCollection services, IConfiguration configuration)
     {
-        services.Configure<GatewayOptions>(configuration.GetSection(GatewayOptions.SectionName));
-        services.AddOpenApi("v1", o =>
+        services.AddOptions<GatewayOptions>()
+            .Bind(configuration.GetSection(GatewayOptions.SectionName))
+            .Validate(o => GatewayOpenApiOptions.TryParseVersion(o.OpenApi.OutputVersion, out _),
+                $"{GatewayOptions.SectionName}:openApi:outputVersion must be one of 3.0, 3.1 or 3.2.")
+            .ValidateOnStart();
+        services.AddOpenApi("v1", o => o.AddDocumentTransformer<OpenApiMerger>());
+        // The merged document is emitted in the configured version (default 3.1). Validation above has
+        // already rejected an unknown value by the time this runs.
+        services.AddOptions<OpenApiOptions>("v1").Configure<IOptions<GatewayOptions>>((o, gateway) =>
         {
-            o.OpenApiVersion = OpenApiSpecVersion.OpenApi3_0;
-            o.AddDocumentTransformer<OpenApiMerger>();
+            if (GatewayOpenApiOptions.TryParseVersion(gateway.Value.OpenApi.OutputVersion, out var version))
+                o.OpenApiVersion = version;
         });
         services.AddHttpContextAccessor();
         services.AddHttpClient();
