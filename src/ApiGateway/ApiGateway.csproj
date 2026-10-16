@@ -22,6 +22,10 @@
     </ItemGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="ApiGateway.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <Content Update="appsettings.json">
             <CopyToOutputDirectory>Always</CopyToOutputDirectory>
         </Content>

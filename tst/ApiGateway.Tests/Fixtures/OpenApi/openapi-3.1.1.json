@@ -1,0 +1,25 @@
+{
+  "openapi": "3.1.1",
+  "info": { "title": "orders", "version": "1.0" },
+  "paths": {
+    "/v1/orders": {
+      "get": {
+        "tags": [ "Orders" ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Order" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Order": {
+        "type": "object",
+        "properties": { "reference": { "type": [ "string", "null" ] } }
+      }
+    }
+  }
+}

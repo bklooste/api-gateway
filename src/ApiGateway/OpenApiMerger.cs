@@ -39,17 +39,7 @@ public class OpenApiMerger(Proxy proxy, IHttpContextAccessor httpContext, ILogge
                 using var fetchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 fetchCts.CancelAfter(TimeSpan.FromSeconds(_options.OpenApiFetchTimeoutSeconds));
                 var json = await proxyClient.GetStringAsync("swagger/v1/swagger.json", fetchCts.Token);
-                using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
-                var loadResult = await OpenApiDocument.LoadAsync(stream);
-
-                if (loadResult == null || loadResult.Diagnostic == null || loadResult.Diagnostic.Errors.Count > 0)
-                {
-                    if (logger.IsEnabled(LogLevel.Error))
-                        logger.LogError("Error with OpenAPI document from {Url} {Message}", x.Value, loadResult?.Diagnostic?.Errors?.FirstOrDefault()?.Message);
-                    return (x.Key, Downstream: (OpenApiDocument?)null);
-                }
-
-                return (x.Key, Downstream: (OpenApiDocument?)loadResult.Document);
+                return (x.Key, Downstream: await LoadDownstreamAsync(json, x.Value?.ToString(), logger));
             }
             catch (Exception ex)
             {
@@ -61,20 +51,79 @@ public class OpenApiMerger(Proxy proxy, IHttpContextAccessor httpContext, ILogge
 
         var results = await Task.WhenAll(tasks);
 
-        foreach (var result in results)
-        {
-            var downstreamDoc = result.Downstream;
+        Merge(document, results.Select(r => r.Downstream), config);
+        proxy.ApiDocument = document;
 
+        // Advertise the externally visible base URL when the gateway sits behind a reverse proxy.
+        if (document?.Servers == null)
+            return;
+
+        if (httpContext?.HttpContext == null)
+            return;
+        var httpReq = httpContext.HttpContext.Request;
+        var srv = httpReq.Headers["X-Forwarded-Host"];
+        if (string.IsNullOrEmpty(srv))
+            srv = httpReq.Host.Value;
+        var scheme = "https";
+        if (srv.Any(x => x != null && x.Contains("localhost")))
+            scheme = "http";
+        var url = $"{scheme}://{srv}/{httpReq.Headers["X-Forwarded-Prefix"]}";
+        document.Servers.Add(new OpenApiServer { Url = url });
+    }
+
+    /// <summary>
+    /// Reads one downstream OpenAPI document (3.0, 3.1 or 3.2). Returns null, and logs, when it does not
+    /// load cleanly, so one bad document never blocks the others from merging.
+    /// </summary>
+    internal static async Task<OpenApiDocument?> LoadDownstreamAsync(string json, string? source, ILogger logger)
+    {
+        using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(json));
+        Microsoft.OpenApi.Reader.ReadResult loadResult;
+        try
+        {
+            loadResult = await OpenApiDocument.LoadAsync(stream);
+        }
+        catch (Exception ex)
+        {
+            // An unsupported "openapi" version (OpenApiUnsupportedSpecVersionException) throws rather
+            // than reporting a diagnostic; malformed input can throw too.
+            if (logger.IsEnabled(LogLevel.Error))
+                logger.LogError(ex, "Error with OpenAPI document from {Url} {Message}", source, ex.Message);
+            return null;
+        }
+
+        if (loadResult == null || loadResult.Diagnostic == null || loadResult.Diagnostic.Errors.Count > 0)
+        {
+            if (logger.IsEnabled(LogLevel.Error))
+                logger.LogError("Error with OpenAPI document from {Url} {Message}", source, loadResult?.Diagnostic?.Errors?.FirstOrDefault()?.Message);
+            return null;
+        }
+
+        return loadResult.Document;
+    }
+
+    /// <summary>
+    /// Merges downstream documents into <paramref name="document"/>: schemas the target lacks are added, and
+    /// paths matching a route are added under the route's client-facing ApiUrl. Null documents are skipped.
+    /// </summary>
+    internal static void Merge(OpenApiDocument document, IEnumerable<OpenApiDocument?> downstreamDocs, ProxyConfig[] config)
+    {
+        foreach (var downstreamDoc in downstreamDocs)
+        {
             if (downstreamDoc == null || downstreamDoc.Components == null || downstreamDoc.Paths == null)
                 continue;
 
             // Merge schemas
             if (downstreamDoc.Components.Schemas != null)
+            {
+                document.Components ??= new OpenApiComponents();
+                document.Components.Schemas ??= new Dictionary<string, IOpenApiSchema>();
                 foreach (var schema in downstreamDoc.Components.Schemas)
                 {
-                    if (!document.Components!.Schemas!.ContainsKey(schema.Key))
+                    if (!document.Components.Schemas.ContainsKey(schema.Key))
                         document.Components.Schemas[schema.Key] = schema.Value;
                 }
+            }
 
             // Merge paths
             foreach (var path in downstreamDoc.Paths)
@@ -108,23 +157,6 @@ public class OpenApiMerger(Proxy proxy, IHttpContextAccessor httpContext, ILogge
                 RelaxCompulsoryArrayParameters(path);
             }
         }
-        proxy.ApiDocument = document;
-
-        // Advertise the externally visible base URL when the gateway sits behind a reverse proxy.
-        if (document?.Servers == null)
-            return;
-
-        if (httpContext?.HttpContext == null)
-            return;
-        var httpReq = httpContext.HttpContext.Request;
-        var srv = httpReq.Headers["X-Forwarded-Host"];
-        if (string.IsNullOrEmpty(srv))
-            srv = httpReq.Host.Value;
-        var scheme = "https";
-        if (srv.Any(x => x != null && x.Contains("localhost")))
-            scheme = "http";
-        var url = $"{scheme}://{srv}/{httpReq.Headers["X-Forwarded-Prefix"]}";
-        document.Servers.Add(new OpenApiServer { Url = url });
     }
 
     private static void SetTagsToApiUrl(OpenApiDocument document, ProxyConfig proxyConfig, KeyValuePair<HttpMethod, OpenApiOperation> operation)

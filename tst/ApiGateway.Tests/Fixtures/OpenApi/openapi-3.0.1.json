@@ -1,0 +1,25 @@
+{
+  "openapi": "3.0.1",
+  "info": { "title": "legacy", "version": "1.0" },
+  "paths": {
+    "/v1/legacy/items": {
+      "get": {
+        "tags": [ "Legacy" ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LegacyItem" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "LegacyItem": {
+        "type": "object",
+        "properties": { "name": { "type": "string", "nullable": true } }
+      }
+    }
+  }
+}
