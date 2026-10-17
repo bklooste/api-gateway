@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `GLOBAL_`-prefixed env vars: environment-wide defaults from a shared env file, read at the lowest
+  precedence (below `appsettings.json`). `DOTNET_` vars still override everything.
 - Reads downstream OpenAPI 3.0, 3.1 and 3.2 documents (Microsoft.OpenApi 3.x). Before, a 3.2 document
   failed to load and that service's paths were missing from the merged document.
 - `gateway:openApi:outputVersion` (`3.0` | `3.1` | `3.2`, default `3.1`): the version the merged document is
