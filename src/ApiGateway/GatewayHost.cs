@@ -47,6 +47,7 @@ public static class GatewayHost
 
         // Configuration is layered, lowest precedence first:
         //
+        //   0. GLOBAL_* env vars  — environment-wide defaults from a shared env file (below the image's own JSON)
         //   1. appsettings.json   — baked into the image: logging, gateway defaults, empty route table
         //   2. RouteFilePath      — mounted route table (ConfigMap / bind mount), carrying proxyConfig
         //   3. DOTNET_* env vars  — per-environment overrides, chiefly EndPoints
@@ -54,6 +55,7 @@ public static class GatewayHost
         // The route table is a *separate* file rather than a replacement appsettings.json so that
         // mounting it cannot silently drop the image's own defaults. It is watched: edit the mounted
         // file and RouteTableProvider rebuilds without a restart.
+        builder.Configuration.AddGlobalDefaults();
         builder.Configuration.AddJsonFile(source =>
         {
             source.Path = RouteFilePath;
