@@ -132,6 +132,14 @@ rebuilds. Three details make this safe:
   atomically when complete; requests keep serving the previous table meanwhile. Build cost is
   therefore irrelevant — it is paid once per change, not per request.
 
+`EndPoints` reloads with it. A background runner re-reads the section whenever the configuration reports
+a change, and every `gateway:endpointRefreshMinutes` (default 5) as a backstop, then swaps in a new
+immutable map without blocking requests. A name new to the map goes live at once, so a backend renamed in
+the same edit as its routes keeps serving. A changed URL is adopted only once its host resolves (checked
+one endpoint at a time, `gateway:endpointResolveTimeoutSeconds` each); until then the previous URL keeps
+serving. The resolved addresses are not cached: `IHttpClientFactory` rotates its connections, so DNS
+changes behind an unchanged URL are picked up on their own.
+
 A malformed file is rejected and logged, and the last good table stays in service. This needs the
 explicit guard in `RouteTableProvider`: .NET's file configuration provider *clears its own data*
 before reporting a parse error, so without it one bad config push would swap in a zero-route table
@@ -141,7 +149,7 @@ and 404 everything. `RouteReloadTests` asserts all of this against a real mounte
 
 | Section                | Purpose                                                            |
 | ---------------------- | ------------------------------------------------------------------ |
-| `EndPoints`            | Downstream service name → base URL. `ProxyName` resolves against it. |
+| `EndPoints`            | Downstream service name → base URL. `ProxyName` resolves against it. Reloads live. |
 | `proxyConfig`          | The route table. See `ProxyConfig.cs` for every field.              |
 | `globalRequiredScopes` | Scopes folded into every route's `AllScopesPredicate`.              |
 | `gateway`              | `GatewayOptions`: identity header names, timeouts, opt-in endpoints. |

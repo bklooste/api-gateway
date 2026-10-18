@@ -15,6 +15,16 @@ public sealed class GatewayOptions
     /// <summary>How long a loaded <c>proxyConfig</c> is held before being re-read. Zero disables reloading.</summary>
     public int ConfigReloadMinutes { get; init; } = 10;
 
+    /// <summary>
+    /// How often <see cref="EndpointRefresher"/> re-reads <c>EndPoints</c> regardless of change notifications,
+    /// and retries changed URLs that did not resolve yet. Zero disables the timer; a reported config change
+    /// still refreshes immediately.
+    /// </summary>
+    public int EndpointRefreshMinutes { get; init; } = 5;
+
+    /// <summary>Timeout for resolving one changed endpoint's host, so a slow lookup delays only that endpoint.</summary>
+    public int EndpointResolveTimeoutSeconds { get; init; } = 2;
+
     /// <summary>Timeout for the <see cref="ResourceAuth"/> lookup, so a slow downstream cannot stall the request.</summary>
     public int ResourceAuthTimeoutSeconds { get; init; } = 5;
 

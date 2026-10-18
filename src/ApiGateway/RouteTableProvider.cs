@@ -97,7 +97,7 @@ public sealed class RouteTableProvider : IDisposable
     /// True when no route file is mounted, or the mounted one is valid JSON. Guards against a
     /// half-written or corrupt file being promoted into service as an empty route table.
     /// </summary>
-    private static bool RouteFileIsParseable(out string? error)
+    internal static bool RouteFileIsParseable(out string? error)
     {
         error = null;
         var path = GatewayHost.RouteFilePath;
