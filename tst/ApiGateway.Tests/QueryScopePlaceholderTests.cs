@@ -104,7 +104,7 @@ public class QueryScopePlaceholderTests
         route["proxyConfig:0:ProxyName"] = "svc";
         var config = new ConfigurationBuilder().AddInMemoryCollection(route).Build();
         var options = Options.Create(new GatewayOptions());
-        var proxy = new Proxy(config, new NoHttpClients());
+        var proxy = new Proxy(new EndpointDirectory(config, options, new DnsEndpointResolver(), NullLoggerFactory.Instance), new NoHttpClients());
         var logic = new HttpMessageLogic(proxy, NullLoggerFactory.Instance,
             new RouteTableProvider(config, options, NullLoggerFactory.Instance), options);
         return (logic, proxy, HttpMessageLogic.LoadProxyConfig(config));

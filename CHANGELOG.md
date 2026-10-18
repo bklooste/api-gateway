@@ -18,6 +18,12 @@ All notable changes to this project are documented here. The format follows
 - `{path:name}` scope placeholder: the request's value for the `{name}` segment of `ApiUrl`.
 - `gateway:overwriteBrandQueryParam` (default `true`): turn off on an admin deployment so the caller's
   `?brand=` reaches the backend instead of being replaced with the admin's own brand.
+- `gateway:endpointRefreshMinutes` (default `5`, `0` disables the timer) and
+  `gateway:endpointResolveTimeoutSeconds` (default `2`): a background runner re-reads `EndPoints` on every
+  config change and on that interval, and publishes the result as a new immutable snapshot without blocking
+  requests. A name new to the map goes live at once; a changed URL is adopted only once its host resolves,
+  one entry at a time, otherwise the last-known-good URL is kept. A route file that fails to parse, or an
+  `EndPoints` section that has gone empty, leaves the map as it was.
 
 ### Changed
 
@@ -34,6 +40,9 @@ All notable changes to this project are documented here. The format follows
 ### Fixed
 
 - Downloads lost their `Content-Disposition` header, so files arrived without their name.
+- `EndPoints` was read once at startup, so a route file edit that renamed a backend reloaded the routes
+  but not the endpoint they named: every request on that route failed with "BaseAddress must be set" until
+  the gateway was restarted. Endpoints now follow the route file like the route table does.
 
 - Initial release. Config-driven routing, per-route scope authorization, URL rewriting, response
   projection, opt-in caching via http-rediscache, downstream OpenAPI merging and OTLP telemetry.

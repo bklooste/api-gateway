@@ -33,7 +33,7 @@ public class BrandHeaderTests
     private static async Task<bool> Authorize(string scopes, params (string Header, string Value)[] headers)
     {
         var options = Options.Create(new GatewayOptions());
-        var proxy = new Proxy(Config, new NoHttpClients());
+        var proxy = new Proxy(new EndpointDirectory(Config, options, new DnsEndpointResolver(), NullLoggerFactory.Instance), new NoHttpClients());
         var logic = new HttpMessageLogic(proxy, NullLoggerFactory.Instance,
             new RouteTableProvider(Config, options, NullLoggerFactory.Instance), options);
 

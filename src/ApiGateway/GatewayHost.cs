@@ -105,6 +105,7 @@ public static class GatewayHost
         // Build the route table now rather than on the first request, so invalid configuration is a
         // startup failure and the loaded route count is visible in the logs before traffic arrives.
         app.Services.GetRequiredService<RouteTableProvider>();
+        app.Services.GetRequiredService<EndpointDirectory>();
 
         return app;
     }

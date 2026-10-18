@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.OpenApi;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Microsoft.OpenApi;
 
@@ -14,9 +15,10 @@ namespace ApiGateway;
 public static class GatewayExtensions
 {
     /// <summary>
-    /// Registers <see cref="Proxy"/>, <see cref="HttpMessageLogic"/> and the "v1" OpenAPI document with
-    /// <see cref="OpenApiMerger"/>. Routes come from <c>proxyConfig</c>, endpoints from <c>EndPoints</c>,
-    /// optional <c>globalRequiredScopes</c> are required on every route, and <c>gateway</c> holds
+    /// Registers <see cref="Proxy"/>, <see cref="HttpMessageLogic"/>, the live <see cref="EndpointDirectory"/>
+    /// with its <see cref="EndpointRefresher"/>, and the "v1" OpenAPI document with <see cref="OpenApiMerger"/>.
+    /// Routes come from <c>proxyConfig</c>, endpoints from <c>EndPoints</c>, optional
+    /// <c>globalRequiredScopes</c> are required on every route, and <c>gateway</c> holds
     /// <see cref="GatewayOptions"/>.
     /// </summary>
     public static IServiceCollection AddApiGateway(this IServiceCollection services, IConfiguration configuration)
@@ -36,6 +38,9 @@ public static class GatewayExtensions
         });
         services.AddHttpContextAccessor();
         services.AddHttpClient();
+        services.TryAddSingleton<IEndpointResolver, DnsEndpointResolver>();
+        services.AddSingleton<EndpointDirectory>();
+        services.AddHostedService<EndpointRefresher>();
         services.AddSingleton<Proxy>();
         services.AddSingleton<RouteTableProvider>();
         services.AddSingleton<HttpMessageLogic>();

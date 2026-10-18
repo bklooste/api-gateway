@@ -143,7 +143,7 @@ public class RouteFeatureTests
         route["proxyConfig:0:ProxyName"] = "svc";
         var config = new ConfigurationBuilder().AddInMemoryCollection(route).Build();
         var options = Options.Create(gatewayOptions ?? new GatewayOptions());
-        var proxy = new Proxy(config, new Clients(handler ?? new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))));
+        var proxy = new Proxy(new EndpointDirectory(config, options, new DnsEndpointResolver(), NullLoggerFactory.Instance), new Clients(handler ?? new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))));
         var logic = new HttpMessageLogic(proxy, NullLoggerFactory.Instance, new RouteTableProvider(config, options, NullLoggerFactory.Instance), options);
         return (logic, proxy, HttpMessageLogic.LoadProxyConfig(config));
     }

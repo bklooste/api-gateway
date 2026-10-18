@@ -75,6 +75,28 @@ public class RouteReloadTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_route_to_a_newly_added_endpoint_serves_without_a_restart()
+    {
+        // The rename case: the route and the EndPoints entry it names arrive in the same file edit. The
+        // endpoint map used to be read once at startup, so this failed with "BaseAddress must be set".
+        (await mockServer.PutAsJsonAsync("/mockserver/expectation", new
+        {
+            httpRequest = new { path = "/upstream/v1/renamed" },
+            httpResponse = new { statusCode = 200, body = "renamed-backend-body" }
+        }, Ct)).EnsureSuccessStatusCode();
+
+        await AddRouteToMountedFile("v1/renamed", proxyName: "renamed_backend",
+            endpointUrl: MockServerUrl.TrimEnd('/') + "/upstream/");
+
+        var response = await PollUntil(() => gateway.SendAsync(Get("/v1/renamed"), Ct),
+            r => r.StatusCode == HttpStatusCode.OK,
+            TimeSpan.FromSeconds(60));
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("renamed-backend-body", await response.Content.ReadAsStringAsync(Ct));
+    }
+
+    [Fact]
     public async Task An_invalid_route_file_is_rejected_and_the_previous_table_keeps_serving()
     {
         (await mockServer.PutAsJsonAsync("/mockserver/expectation", new
@@ -113,8 +135,11 @@ public class RouteReloadTests : IAsyncLifetime
         Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
     }
 
-    /// <summary>Rewrites the mounted file with an extra route appended to proxyConfig.</summary>
-    private async Task AddRouteToMountedFile(string apiUrl)
+    /// <summary>
+    /// Rewrites the mounted file with an extra route appended to proxyConfig, and with
+    /// <paramref name="endpointUrl"/> set, an EndPoints entry for <paramref name="proxyName"/>.
+    /// </summary>
+    private async Task AddRouteToMountedFile(string apiUrl, string proxyName = "upstream", string? endpointUrl = null)
     {
         using var doc = JsonDocument.Parse(_original!);
         var routes = doc.RootElement.GetProperty("proxyConfig").EnumerateArray()
@@ -125,11 +150,19 @@ public class RouteReloadTests : IAsyncLifetime
             updated[prop.Name] = prop.Value.Clone();
 
         var newRoute = JsonSerializer.Deserialize<JsonElement>($$"""
-            { "ProxyName": "upstream", "ApiUrl": "{{apiUrl}}", "ProxyUrl": "{{apiUrl}}",
+            { "ProxyName": "{{proxyName}}", "ApiUrl": "{{apiUrl}}", "ProxyUrl": "{{apiUrl}}",
               "AnyScopesPredicate": [ "events-r" ] }
             """);
 
         updated["proxyConfig"] = routes.Append(newRoute).ToList();
+
+        if (endpointUrl != null)
+        {
+            var endpoints = doc.RootElement.GetProperty("EndPoints").EnumerateObject()
+                .ToDictionary(e => e.Name, e => e.Value.GetString());
+            endpoints[proxyName] = endpointUrl;
+            updated["EndPoints"] = endpoints;
+        }
 
         // Write via a temp file and move, so the gateway never observes a half-written file.
         var temp = RouteFile! + ".tmp";
