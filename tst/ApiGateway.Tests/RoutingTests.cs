@@ -13,6 +13,25 @@ public class RoutingTests
     public void PathMatchesTemplate_matches_by_segment(string path, string template, bool expected) =>
         Assert.Equal(expected, HttpMessageLogic.PathMatchesTemplate(path, template));
 
+    private const string AllRoute = "v1/admin/result/all/{brand}/{eventId}";
+    private const string ParamRoute = "v1/admin/result/{brand}/{eventId}/{marketType}";
+
+    [Theory]
+    [InlineData("/v1/admin/result/all/B/E", AllRoute)]
+    [InlineData("/v1/admin/result/B/E/M", ParamRoute)]
+    public void RankMatches_prefers_literal_segments_regardless_of_file_order(string path, string expected)
+    {
+        Assert.Equal(expected, HttpMessageLogic.RankMatches(path, [AllRoute, ParamRoute], t => t)[0]);
+        Assert.Equal(expected, HttpMessageLogic.RankMatches(path, [ParamRoute, AllRoute], t => t)[0]);
+    }
+
+    [Fact]
+    public void RankMatches_still_prefers_longer_templates_over_prefix_matches()
+    {
+        var ranked = HttpMessageLogic.RankMatches("/v1/me/wallet/withdraw/balance", ["v1/me/wallet", "v1/me/{x}/withdraw/balance"], t => t);
+        Assert.Equal("v1/me/{x}/withdraw/balance", ranked[0]);
+    }
+
     [Fact]
     public void RewriteUrl_substitutes_path_parameters()
     {
