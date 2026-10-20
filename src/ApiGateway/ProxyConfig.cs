@@ -40,6 +40,14 @@ public record ProxyConfig
     /// <summary>When set, the request is routed through the cache service (GET only unless <see cref="Method"/> is pinned).</summary>
     public CacheConfig? Cache { get; init; }
 
+    /// <summary>
+    /// When true, the response is routed through the translate service (GET only unless <see cref="Method"/> is
+    /// pinned); the target language is the request's <c>lang</c> query parameter. Optional and off by default.
+    /// With <see cref="Cache"/> as well, the cache sits in front of the translate service and <c>lang</c> is
+    /// added to the cache key.
+    /// </summary>
+    public bool Translate { get; init; }
+
     // ---- Precomputed at load time by HttpMessageLogic.LoadProxyConfig ----
     //
     // These are derived, not bound from configuration. They exist so the per-request path can skip
@@ -62,6 +70,10 @@ public record ProxyConfig
         var all = (AnyScopesPredicate ?? []).Concat(AllScopesPredicate ?? []).ToArray();
         return this with
         {
+            // A translated response differs per language, so the cache must key on it.
+            Cache = Translate && Cache != null && !(Cache.CacheVars ?? []).Contains(HttpMessageLogic.TranslateLangVar)
+                ? Cache with { CacheVars = [.. Cache.CacheVars ?? [], HttpMessageLogic.TranslateLangVar] }
+                : Cache,
             HasPredicates = all.Length > 0,
             HasPlaceholders = all.Any(p => p.Contains('{')),
             NeedsResourceLookup = ResourceAuth != null && all.Any(p => p.Contains("{resource:", StringComparison.Ordinal))
