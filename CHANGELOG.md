@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Optional per-route `"Translate": true`: the response is routed through the `translate` endpoint
+  (`translate/<path>?<query>&translateUpstream=<upstream>`), target language from `?lang=`. With `Cache` as
+  well, the cache sits in front of the translate service and `lang` is added to the cache key. Routes
+  without it, and deployments without a `translate` endpoint, are unchanged.
 - `GLOBAL_`-prefixed env vars: environment-wide defaults from a shared env file, read at the lowest
   precedence (below `appsettings.json`). `DOTNET_` vars still override everything.
 - Reads downstream OpenAPI 3.0, 3.1 and 3.2 documents (Microsoft.OpenApi 3.x). Before, a 3.2 document

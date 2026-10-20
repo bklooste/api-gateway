@@ -94,26 +94,34 @@ public class HttpMessageLogic
             return Results.StatusCode(StatusCodes.Status403Forbidden);
         }
 
-        // Cache is opt-in per route. When a route doesn't pin Method, only GET requests
-        // route through the cache — the same path may also serve PUT/POST/DELETE writes which
-        // must bypass it.
-        var useCache = configEntry.Cache != null
-            && (configEntry.Method != null
-                ? string.Equals(configEntry.Method, request.Method, StringComparison.OrdinalIgnoreCase)
-                : HttpMethods.IsGet(request.Method));
-        var proxyClient = useCache
-            ? proxy.GetHttpClient(CacheServiceName)
-            : proxy.GetHttpClient(configEntry.ProxyName);
+        // Cache and translate are opt-in per route. When a route doesn't pin Method, only GET requests
+        // route through them — the same path may also serve PUT/POST/DELETE writes which must bypass both.
+        var methodRoutable = configEntry.Method != null
+            ? string.Equals(configEntry.Method, request.Method, StringComparison.OrdinalIgnoreCase)
+            : HttpMethods.IsGet(request.Method);
+        var useCache = configEntry.Cache != null && methodRoutable;
+        var useTranslate = configEntry.Translate && methodRoutable;
+        var proxyClient = proxy.GetHttpClient(
+            useCache ? CacheServiceName : useTranslate ? TranslateServiceName : configEntry.ProxyName);
         // Comma-separated values are exploded into repeated keys so the downstream string[] binder works.
         var queryParams = QueryStrings.GetQueryString(request, brand, userId, _options.OverwriteBrandQueryParam);
         var url = QueryStrings.AddQueryParams(slug, queryParams);
         url = RewriteUrl(url, configEntry.ApiUrl, configEntry.ProxyUrl, userId.ToString(), brand.ToString());
 
-        if (useCache)
+        if (useCache || useTranslate)
         {
             var upstreamBase = proxy.GetEndpointUrl(configEntry.ProxyName)
                 ?? throw new InvalidOperationException($"No EndPoint registered for ProxyName '{configEntry.ProxyName}'");
-            url = BuildCacheUrl(upstreamBase, url, configEntry.Cache!);
+
+            // Order is client → cache → translate → upstream, so the cache holds translated bodies.
+            if (useTranslate)
+            {
+                url = BuildTranslateUrl(upstreamBase, url);
+                upstreamBase = proxy.GetEndpointUrl(TranslateServiceName)
+                    ?? throw new InvalidOperationException($"Route '{configEntry.ApiUrl}' sets Translate but no EndPoint '{TranslateServiceName}' is registered");
+            }
+            if (useCache)
+                url = BuildCacheUrl(upstreamBase, url, configEntry.Cache!);
         }
 
         var newRequest = await CopyRequest(request, url, headers);
@@ -175,6 +183,15 @@ public class HttpMessageLogic
     /// The reference deployment points this at http-rediscache.
     /// </summary>
     public const string CacheServiceName = "cache";
+
+    /// <summary><c>EndPoints</c> key of the translate service routes opt into via <see cref="ProxyConfig.Translate"/>.</summary>
+    public const string TranslateServiceName = "translate";
+
+    /// <summary>Query parameter carrying the target language; added to the cache key of translated routes.</summary>
+    public const string TranslateLangVar = "lang";
+
+    /// <summary>Query parameter carrying the upstream base URL to the translate service.</summary>
+    public const string TranslateUpstreamVar = "translateUpstream";
 
     /// <summary>
     /// Evaluates the entry's scope predicates against the caller's comma-separated scopes.
@@ -487,6 +504,19 @@ public class HttpMessageLogic
         if (cache.TtlSeconds.HasValue)
             sb.Append("&ttl=").Append(cache.TtlSeconds.Value);
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Build the relative URL used to call the translate service:
+    /// <c>translate/&lt;rewrittenUrl&gt;&amp;translateUpstream=&lt;upstream-host&gt;</c>.
+    /// The upstream path and query stay at the top level rather than inside an encoded parameter, so a cache
+    /// in front still finds its key vars (<c>brand</c>, <c>lang</c>…) in the query string.
+    /// </summary>
+    public static string BuildTranslateUrl(string upstreamBaseUrl, string rewrittenUrl)
+    {
+        var path = rewrittenUrl.TrimStart('/');
+        var separator = path.Contains('?') ? '&' : '?';
+        return $"translate/{path}{separator}{TranslateUpstreamVar}={Uri.EscapeDataString(upstreamBaseUrl.TrimEnd('/'))}";
     }
 
     private static bool MethodAllowsBody(string method)

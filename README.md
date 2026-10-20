@@ -280,6 +280,15 @@ Routes opt in via `Cache`. The request is then sent to the `cache` endpoint
 encoded query parameter. Only GET is cached unless the route pins `Method`, so a path that also
 serves writes is not cached by accident.
 
+## Translation
+
+Routes opt in with `"Translate": true`; it is off by default and needs a `translate` endpoint only when a
+route uses it. The request is sent to `translate/<rewritten path>?<query>&translateUpstream=<upstream base>`,
+so the translate service sees the original query (including `lang`, the target language) at the top level.
+On a route that also sets `Cache`, the order is client → cache → translate → upstream: the cache holds
+translated bodies, and `lang` is added to its `CacheVars` automatically so languages never share an entry.
+Same method rule as caching: GET only unless the route pins `Method`.
+
 ## Telemetry
 
 Traces, metrics and logs are exported over OTLP, configured entirely by the standard environment
