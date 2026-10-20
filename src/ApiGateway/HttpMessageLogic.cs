@@ -63,11 +63,10 @@ public class HttpMessageLogic
         request.Headers.TryGetValue(headers.Brand, out var brand);
         request.Headers.TryGetValue(headers.UserId, out var userId);
 
-        // Sort descending by template segment count so the most-specific entry wins when
-        // a shorter template is also a prefix of the path (e.g. v1/me/wallet vs v1/me/wallet/withdraw/balance).
-        var pathMatches = Config?.Where(c => PathMatchesTemplate(request.Path, c.ApiUrl))
-            .OrderByDescending(c => c.ApiUrl.Count(ch => ch == '/'))
-            .ToList();
+        // Most-specific entry first: longer templates win (a shorter template may be a prefix of the path,
+        // e.g. v1/me/wallet vs v1/me/wallet/withdraw/balance); among equal lengths, literal segments beat
+        // {param} segments left to right, so ranking never depends on file order.
+        var pathMatches = Config is null ? null : RankMatches(request.Path, Config, c => c.ApiUrl);
 
         if (pathMatches == null || pathMatches.Count == 0)
         {
@@ -448,6 +447,21 @@ public class HttpMessageLogic
 
         return rewritten + queryPart;
     }
+
+    /// <summary>
+    /// Returns the entries whose template matches <paramref name="requestPath"/>, most specific first:
+    /// descending by '/' count, then by literal-vs-{param} pattern compared left to right (a literal beats a
+    /// param at the first differing segment). Ties beyond that keep input order.
+    /// </summary>
+    public static List<T> RankMatches<T>(string requestPath, IEnumerable<T> entries, Func<T, string> template) =>
+        [.. entries.Where(e => PathMatchesTemplate(requestPath, template(e)))
+            .OrderByDescending(e => template(e).Count(ch => ch == '/'))
+            .ThenByDescending(e => LiteralMask(template(e)), StringComparer.Ordinal)];
+
+    /// <summary>'1' per literal segment, '0' per {param}; ordinal-descending puts literals first.</summary>
+    private static string LiteralMask(string apiUrlTemplate) =>
+        string.Concat(apiUrlTemplate.TrimStart('/').Split('/')
+            .Select(t => t.StartsWith('{') && t.EndsWith('}') ? '0' : '1'));
 
     /// <summary>
     /// Matches a request path against a config ApiUrl template.
