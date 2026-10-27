@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Downstream error bodies no longer reach the caller as-is. A 4xx ProblemDetails carrying a `code`
+  extension (an error key) passes through; every 5xx, and any 4xx without a key, is logged with its
+  original body and replaced with `{"status":…,"title":…,"code":"Http<status>"|"Http5xx","traceId":…}`.
+  An unreachable downstream returns the same shape as a 502 instead of an unhandled 500.
+
 ### Added
 
 - Optional per-route `"Translate": true`: the response is routed through the `translate` endpoint

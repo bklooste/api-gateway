@@ -1,7 +1,10 @@
+using System.Diagnostics;
 using System.Net;
 using System.Text.Json;
 
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -132,7 +135,17 @@ public class HttpMessageLogic
         //
         // RequestAborted: a client that disconnects must not leave the downstream call running to
         // HttpClient's default 100s timeout, holding a connection open the whole time.
-        var response = await proxyClient.SendAsync(newRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        HttpResponseMessage response;
+        try
+        {
+            response = await proxyClient.SendAsync(newRequest, HttpCompletionOption.ResponseHeadersRead, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            // Unreachable downstream: the message names internal hosts and ports, so it is logged, not returned.
+            logger.LogError(ex, "Downstream {ProxyName} unreachable for {Path}", configEntry.ProxyName, request.Path);
+            return StandardError(StatusCodes.Status502BadGateway);
+        }
 
         // The response outlives this method on the streaming path, so ownership passes to the
         // request: it is disposed once the response has been written.
@@ -170,11 +183,66 @@ public class HttpMessageLogic
             return Results.Stream(await response.Content.ReadAsStreamAsync(ct), contentType);
         }
 
-        return Results.Content(
-            await response.Content.ReadAsStringAsync(ct),
-            contentType: contentType,
-            statusCode: (int)response.StatusCode
-        );
+        return await ErrorResult(response, configEntry, request.Path, contentType, ct);
+    }
+
+    /// <summary>ProblemDetails extension carrying the error key clients translate.</summary>
+    public const string ErrorCodeExtension = "code";
+
+    /// <summary>
+    /// A downstream error reaches the caller only when it already carries an error key (a ProblemDetails
+    /// with <c>code</c>), which is the service deliberately telling the user something. Anything else, a 5xx
+    /// or an unkeyed 4xx such as a raw exception message, is logged and replaced with the standard body for
+    /// its status, so internals never leak and every error the client sees has a key to translate.
+    /// </summary>
+    private async Task<IResult> ErrorResult(HttpResponseMessage response, ProxyConfig configEntry, string? path, string contentType, CancellationToken ct)
+    {
+        var status = (int)response.StatusCode;
+        var body = await response.Content.ReadAsStringAsync(ct);
+
+        if (status < 400 || (status < 500 && HasErrorCode(body)))
+            return Results.Content(body, contentType, statusCode: status);
+
+        logger.LogWarning("Downstream {ProxyName} returned {Status} for {Path}, replaced with the standard error: {Body}",
+            configEntry.ProxyName, status, path, body);
+        return StandardError(status);
+    }
+
+    private static bool HasErrorCode(string body)
+    {
+        if (body.Length == 0 || body[0] != '{')
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty(ErrorCodeExtension, out var code)
+                && code.ValueKind == JsonValueKind.String
+                && code.GetString()!.Length > 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The standard body for <paramref name="status"/>: key <c>Http{status}</c> for a 4xx, <c>Http5xx</c> for
+    /// every 5xx, and the trace id so support can find the logged original.
+    /// </summary>
+    public static IResult StandardError(int status)
+    {
+        var problem = new ProblemDetails
+        {
+            Status = status,
+            Title = ReasonPhrases.GetReasonPhrase(status),
+            Extensions =
+            {
+                [ErrorCodeExtension] = status >= 500 ? "Http5xx" : $"Http{status}",
+            },
+        };
+        if (Activity.Current?.TraceId.ToString() is { } traceId)
+            problem.Extensions["traceId"] = traceId;
+        return Results.Problem(problem);
     }
 
     /// <summary>
