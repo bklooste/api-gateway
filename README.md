@@ -289,6 +289,20 @@ On a route that also sets `Cache`, the order is client → cache → translate �
 translated bodies, and `lang` is added to its `CacheVars` automatically so languages never share an entry.
 Same method rule as caching: GET only unless the route pins `Method`.
 
+## Errors
+
+A downstream error reaches the caller only when it carries an error key: a 4xx
+[ProblemDetails](https://www.rfc-editor.org/rfc/rfc9457) with a `code` extension, which the client
+translates (the service's `detail`/`params` come along). Everything else (every 5xx, and any 4xx
+without a `code`, such as a raw exception message) is logged at Warning with its original body and
+replaced with a standard body the client can still translate:
+
+```json
+{ "status": 409, "title": "Conflict", "code": "Http409", "traceId": "4bf92f3577b34da6a3ce929d0e0e4736" }
+```
+
+5xx all use `Http5xx`. An unreachable downstream is a `502` with the same shape. 3xx pass through unchanged.
+
 ## Telemetry
 
 Traces, metrics and logs are exported over OTLP, configured entirely by the standard environment
