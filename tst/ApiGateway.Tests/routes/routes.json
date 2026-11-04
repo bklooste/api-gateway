@@ -1,7 +1,8 @@
 {
   "EndPoints": {
     "upstream": "http://test-mockserver:1090/upstream/",
-    "cache": "http://cache:8080/"
+    "cache": "http://cache:8080/",
+    "scheduler": "http://scheduler:8080/"
   },
   "proxyConfig": [
     {
@@ -25,6 +26,40 @@
         ],
         "TtlSeconds": 60
       }
+    },
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/reports/{id}",
+      "ProxyUrl": "v1/report/{id}",
+      "Method": "POST",
+      "AnyScopesPredicate": [
+        "reports-w"
+      ],
+      "Async": {
+        "MaxWaitSeconds": 20,
+        "TimeoutSeconds": 20
+      }
+    },
+    {
+      "ProxyName": "upstream",
+      "ApiUrl": "v1/quick-reports/{id}",
+      "ProxyUrl": "v1/report/{id}",
+      "Method": "POST",
+      "AnyScopesPredicate": [
+        "reports-w"
+      ],
+      "Async": {
+        "MaxWaitSeconds": 1
+      }
+    },
+    {
+      "ProxyName": "scheduler",
+      "ApiUrl": "v1/async/{handle}",
+      "ProxyUrl": "v1/jobs/{handle}/result",
+      "Method": "GET",
+      "AnyScopesPredicate": [
+        "reports-w"
+      ]
     }
   ]
 }

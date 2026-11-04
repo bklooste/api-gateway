@@ -46,6 +46,20 @@ public sealed class GatewayOptions
 
     /// <summary>Settings for the merged OpenAPI document the gateway serves.</summary>
     public GatewayOpenApiOptions OpenApi { get; init; } = new();
+
+    /// <summary>Settings for <see cref="ProxyConfig.Async"/> routes.</summary>
+    public GatewayAsyncOptions Async { get; init; } = new();
+}
+
+/// <summary>Settings for <see cref="ProxyConfig.Async"/> routes, bound from <c>gateway:async</c>.</summary>
+public sealed class GatewayAsyncOptions
+{
+    /// <summary>
+    /// Largest <see cref="AsyncConfig.TimeoutSeconds"/> a route may set; a larger one fails the route table load.
+    /// It mirrors what the scheduler accepts, which is the smaller of its <c>CallbackTimeoutSeconds</c> and its
+    /// <c>InvisibilityTimeoutSeconds</c> less 10 (30 with the scheduler's defaults). Raise it together with those.
+    /// </summary>
+    public int MaxTimeoutSeconds { get; init; } = 30;
 }
 
 /// <summary>Settings for the merged OpenAPI document, bound from <c>gateway:openApi</c>.</summary>

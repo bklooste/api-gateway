@@ -21,6 +21,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Optional per-route `Async` (`MaxWaitSeconds`, `TimeoutSeconds`, `ResultTtlSeconds`): the call is handed to the
+  `scheduler` endpoint (async-scheduler 0.3+) under a fresh handle owned by the caller's `userId`. With
+  `Prefer: wait=N` the client gets the downstream's answer within that time, through the usual error mapping;
+  otherwise a `202` with `Retry-After` and `{"handle","state"}`, and it polls an ordinary route to the scheduler's
+  `v1/jobs/{handle}/result`. Load-time rules: a scope predicate, no `Cache`/`Translate`/`ResponsePath`, an
+  `EndPoints:scheduler`, and limits (`gateway:async:maxTimeoutSeconds`, default 30). Routes without it are unchanged.
+- `Retry-After` from a downstream is passed to the client.
 - Optional per-route `"Translate": true`: the response is routed through the `translate` endpoint
   (`translate/<path>?<query>&translateUpstream=<upstream>`), target language from `?lang=`. With `Cache` as
   well, the cache sits in front of the translate service and `lang` is added to the cache key. Routes

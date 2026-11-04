@@ -1,5 +1,6 @@
 # End-to-end stack for the standalone gateway: the gateway container, the real cache container
-# (ghcr.io/bklooste/http-rediscache) with its Redis, and a MockServer standing in for upstreams.
+# (ghcr.io/bklooste/http-rediscache) with its Redis, the real scheduler (ghcr.io/bklooste/async-scheduler) for
+# Async routes, and a MockServer standing in for upstreams.
 #
 # The cache is a published public image, so it is exercised for real here rather than mocked.
 #
@@ -42,6 +43,8 @@ services:
         condition: service_started
       test-mockserver:
         condition: service_started
+      scheduler:
+        condition: service_started
     # Read-only root, as Kubernetes runs it (readOnlyRootFilesystem): nothing may need a writable /tmp.
     read_only: true
     volumes:
@@ -51,6 +54,7 @@ services:
       - DOTNET_Logging__LogLevel__Default=Debug
       - DOTNET_EndPoints__cache=http://cache:8080/
       - DOTNET_EndPoints__upstream=http://test-mockserver:1090/upstream/
+      - DOTNET_EndPoints__scheduler=http://scheduler:8080/
       # No OTEL_EXPORTER_OTLP_ENDPOINT: the exporters stay inert, proving the container
       # runs without a collector.
       - OTEL_SERVICE_NAME=api-gateway-test
@@ -65,6 +69,15 @@ services:
     environment:
       - ConnectionStrings__Redis=redis-cache:6379,abortConnect=false
       - ASPNETCORE_HTTP_PORTS=8080
+
+  # Async routes hand calls here. In-memory storage: the gateway's contract with it is HTTP only.
+  scheduler:
+    image: ghcr.io/bklooste/async-scheduler/service:0.3.1
+    environment:
+      - ASPNETCORE_HTTP_PORTS=8080
+      # The smallest allowed, so AsyncIntegrationTests can produce ResultTooLarge with a small body.
+      - Scheduler__MaxResultBytes=1024
+      - Scheduler__DashboardEnabled=false
 
   redis-cache:
     image: redis:7-alpine
