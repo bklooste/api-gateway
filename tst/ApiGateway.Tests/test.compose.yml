@@ -42,6 +42,8 @@ services:
         condition: service_started
       test-mockserver:
         condition: service_started
+    # Read-only root, as Kubernetes runs it (readOnlyRootFilesystem): nothing may need a writable /tmp.
+    read_only: true
     volumes:
       - ./routes:/config:ro
     environment:

@@ -100,6 +100,28 @@ public class CacheIntegrationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task A_write_body_over_30_KB_reaches_the_upstream_whole_on_a_read_only_filesystem()
+    {
+        // test.compose.yml runs the gateway with a read-only root, as Kubernetes does. A body past 30 KB
+        // used to be spilled to a temp file, which failed there with a 500.
+        await ExpectUpstream("/upstream/v1/event", """{"id":"e1"}""");
+        var body = new string('a', 64 * 1024);
+        var request = Get("/v1/event");
+        request.Method = HttpMethod.Post;
+        request.Content = new StringContent(body, System.Text.Encoding.UTF8, "text/plain");
+
+        var response = await gateway.SendAsync(request, Ct);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var retrieved = await mockServer.PutAsJsonAsync("/mockserver/retrieve?type=REQUESTS",
+            new { path = "/upstream/v1/event", method = "POST" }, Ct);
+        var received = JsonDocument.Parse(await retrieved.Content.ReadAsStringAsync(Ct)).RootElement;
+        Assert.Equal(1, received.GetArrayLength());
+        var sent = received[0].GetProperty("body");
+        Assert.Equal(body, sent.ValueKind == JsonValueKind.String ? sent.GetString() : sent.GetProperty("string").GetString());
+    }
+
+    [Fact]
     public async Task A_cached_route_hits_the_upstream_only_once()
     {
         await ExpectUpstream("/upstream/v1/nav", """{"nav":"first"}""");

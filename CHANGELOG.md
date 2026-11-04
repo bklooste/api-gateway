@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A write whose body is over 30 KB no longer fails with a 500 when the root filesystem is read-only (as
+  Kubernetes runs the gateway with `readOnlyRootFilesystem`). The body was spilled to a temp file by
+  request buffering; it is now read once into memory, and copied once instead of twice.
+
 ### Changed
 
 - Downstream error bodies no longer reach the caller as-is. A 4xx ProblemDetails carrying a `code`

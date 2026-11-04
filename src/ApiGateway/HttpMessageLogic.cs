@@ -619,16 +619,15 @@ public class HttpMessageLogic
         // ---- Body ----
         if (MethodAllowsBody(source.Method))
         {
-            // Some clients send chunked bodies (ContentLength == null). We still copy if readable.
-            source.EnableBuffering();
-            source.Body.Position = 0;
-
-            // Buffer once into a byte[] so HttpClient owns the payload (prevents ObjectDisposedException).
-            await using var ms = new MemoryStream();
+            // Buffer once, in memory, so HttpClient owns the payload (prevents ObjectDisposedException).
+            // Chunked bodies (ContentLength == null) are copied the same way. Nothing reads the body
+            // before this, so it is not rewound: EnableBuffering() would spill a body over 30 KB to a temp
+            // file, and with a read-only root filesystem (as Kubernetes runs the gateway) every such write
+            // failed with a 500. The size is bounded by Kestrel's MaxRequestBodySize.
+            var ms = new MemoryStream(source.ContentLength is > 0 and <= int.MaxValue ? (int)source.ContentLength.Value : 0);
             await source.Body.CopyToAsync(ms, source.HttpContext.RequestAborted);
-            var buffer = ms.ToArray();
 
-            var content = new ByteArrayContent(buffer);
+            var content = new ByteArrayContent(ms.GetBuffer(), 0, (int)ms.Length);
 
             // Preserve Content-Type (including boundary for multipart/form-data)
             if (!string.IsNullOrEmpty(source.ContentType))
