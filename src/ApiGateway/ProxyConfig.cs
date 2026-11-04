@@ -48,6 +48,14 @@ public record ProxyConfig
     /// </summary>
     public bool Translate { get; init; }
 
+    /// <summary>
+    /// When set, the call is handed to the <c>scheduler</c> endpoint (async-scheduler) instead of being sent: the
+    /// client gets the result within <c>Prefer: wait=N</c> seconds, or a <c>202</c> with a handle to poll. The route
+    /// must have a scope predicate (the job's owner is the caller) and cannot also set <see cref="Cache"/>,
+    /// <see cref="Translate"/> or <see cref="ResponsePath"/>. See <see cref="AsyncConfig"/>.
+    /// </summary>
+    public AsyncConfig? Async { get; init; }
+
     // ---- Precomputed at load time by HttpMessageLogic.LoadProxyConfig ----
     //
     // These are derived, not bound from configuration. They exist so the per-request path can skip
@@ -95,6 +103,31 @@ public record CacheConfig
 
     /// <summary>Entry lifetime in seconds. Null lets the cache service apply its own default.</summary>
     public int? TtlSeconds { get; init; }
+}
+
+/// <summary>
+/// An <see cref="ProxyConfig.Async"/> route's limits. The downstream call itself runs in the scheduler, so a slow
+/// downstream holds neither the client's connection nor the gateway's.
+/// </summary>
+public record AsyncConfig
+{
+    /// <summary>Hard cap on the scheduler's <c>wait</c>, whatever the client's <c>Prefer: wait=N</c> asks for.</summary>
+    public const int WaitCeilingSeconds = 50;
+
+    /// <summary>Longest result lifetime the scheduler accepts.</summary>
+    public const int MaxResultTtlSeconds = 86400;
+
+    /// <summary>Longest the gateway waits for the result when the client sends <c>Prefer: wait=N</c>; at most 50.</summary>
+    public int MaxWaitSeconds { get; init; } = 25;
+
+    /// <summary>
+    /// Per-call timeout the scheduler applies to the downstream call. Null leaves it to the scheduler's
+    /// <c>CallbackTimeoutSeconds</c>. At most <c>gateway:async:maxTimeoutSeconds</c>.
+    /// </summary>
+    public int? TimeoutSeconds { get; init; }
+
+    /// <summary>How long the scheduler keeps the result for the client to read.</summary>
+    public int ResultTtlSeconds { get; init; } = 3600;
 }
 
 /// <summary>

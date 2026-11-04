@@ -24,6 +24,8 @@ What it does:
 - **Authorizes** — per-route scope predicates, with `{userId}`, `{brand}`, `{path:name}`, `{query:name}` and `{resource:Prop}`
   placeholders. The last resolves by fetching the target resource first, so you can gate on who owns it.
 - **Caches** — routes opt in and are proxied via [http-rediscache](https://github.com/bklooste/http-rediscache).
+- **Runs slow calls async** — routes opt in and are handed to [async-scheduler](https://github.com/bklooste/async-scheduler);
+  the client waits a bounded time or polls a handle.
 - **Merges OpenAPI** — pulls each backend's document (OpenAPI 3.0, 3.1 or 3.2) and presents one combined
   spec under the client-facing paths, served at `/swagger/v1/swagger.json` in the configured version.
 - **Reloads live** — edit the mounted route file (or ConfigMap) and routing changes within seconds,
@@ -289,6 +291,70 @@ On a route that also sets `Cache`, the order is client → cache → translate �
 translated bodies, and `lang` is added to its `CacheVars` automatically so languages never share an entry.
 Same method rule as caching: GET only unless the route pins `Method`.
 
+## Async calls
+
+A route with `Async` does not hold the client's connection while a slow downstream works. The gateway hands the
+call to the `scheduler` endpoint ([async-scheduler](https://github.com/bklooste/async-scheduler) 0.3 or later) and
+the client either waits a bounded time for the answer or polls for it.
+
+```jsonc
+{
+  "EndPoints": { "reports": "http://reports:8080/", "scheduler": "http://scheduler:8080/" },
+  "proxyConfig": [
+    {
+      "ProxyName": "reports", "ApiUrl": "v1/reports/{id}", "ProxyUrl": "v1/report/{id}", "Method": "POST",
+      "AnyScopesPredicate": [ "reports-w" ],
+      "Async": { "MaxWaitSeconds": 25, "TimeoutSeconds": 30, "ResultTtlSeconds": 3600 }
+    },
+    // The poll route: a plain route to the scheduler, no gateway code. Any signed-in predicate will do.
+    {
+      "ProxyName": "scheduler", "ApiUrl": "v1/async/{handle}", "ProxyUrl": "v1/jobs/{handle}/result", "Method": "GET",
+      "AnyScopesPredicate": [ "reports-w" ]
+    }
+  ]
+}
+```
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `MaxWaitSeconds` | 25 | Longest the gateway waits for the answer when the client asks to (0-50). |
+| `TimeoutSeconds` | the scheduler's `CallbackTimeoutSeconds` | Timeout for the downstream call. At most `gateway:async:maxTimeoutSeconds` (default 30). |
+| `ResultTtlSeconds` | 3600 | How long the answer is kept for the client to read (1-86400). |
+
+`"Async": {}` turns it on with every default.
+
+What happens:
+
+1. Matching, authorization, the rewrite, the `userId`/`brand` query overwrite and the header copy run exactly as for a
+   synchronous call.
+2. Instead of sending the request, the gateway mints a handle (a random UUID) and enqueues the call on the
+   scheduler's `async` queue, owned by the caller's `userId`, with the body, the headers and `Idempotency-Key: <handle>`.
+3. With `Prefer: wait=N` ([RFC 7240](https://www.rfc-editor.org/rfc/rfc7240)) the gateway reads the result for up to
+   `min(N, MaxWaitSeconds)` seconds. A finished answer is returned with the downstream's status, content type and body,
+   through the same [error mapping](#errors) as a synchronous call. Otherwise, and always without `Prefer`, the client
+   gets `202`, `Retry-After` and `{"handle": "…", "state": "Enqueued" | "Processing" | "Retrying"}`.
+4. The client polls `GET v1/async/{handle}` (with `?wait=N` to long-poll). The gateway's `userId` overwrite is what
+   makes the scheduler's owner check trustworthy: another user's poll gets the same `404` as an unknown handle.
+   Still running is `202` with `Retry-After`; done is the downstream's answer, error-mapped.
+
+A downstream `5xx`, timeout or connection error is retried by the scheduler (3 attempts), then returned as `Http5xx`.
+A result over the scheduler's `MaxResultBytes` (1 MiB by default) is a `502`. An unreachable or refusing scheduler is
+a `502`. There is no `Location` header: the gateway sees only the path after the edge proxy, so clients build the poll
+URL from `handle` relative to their API base.
+
+**The downstream must be idempotent on `Idempotency-Key`** (or idempotent by nature). The scheduler runs a job at
+least once: a worker that dies mid-call has its job run again.
+
+Load-time rules (a violation fails startup; on a reload the previous table keeps serving): an `Async` route needs a
+scope predicate (`globalRequiredScopes` count), because the caller owns the job; it cannot also set `Cache`,
+`Translate` or `ResponsePath`; it needs an `EndPoints:scheduler`; and the limits in the table above.
+`gateway:async:maxTimeoutSeconds` should match what the scheduler accepts: the smaller of its
+`CallbackTimeoutSeconds` and `InvisibilityTimeoutSeconds` less 10.
+
+Responses from an `Async` route and from routes to the `scheduler` endpoint keep the downstream's 2xx status (a poll's
+`202` must stay distinguishable from the answer). Other routes still answer `200` for any 2xx. `Retry-After` from any
+downstream now reaches the client.
+
 ## Errors
 
 A downstream error reaches the caller only when it carries an error key: a 4xx
@@ -322,7 +388,7 @@ DOCKER_UID=$(id -u) DOCKER_GID=$(id -g) \
 ```
 
 The compose stack asserts that a cached route hits the upstream exactly once, that a client cannot
-smuggle its own `userId`, and that editing the mounted route file changes routing without a restart
+smuggle its own `userId`, that `Async` routes wait, poll and map errors against the real scheduler image, and that editing the mounted route file changes routing without a restart
 (including that a malformed file is rejected and the previous table keeps serving). The
 compose-backed tests skip unless `GatewayHttpUrl` is set, so a plain `dotnet test` needs no Docker.
 ## License

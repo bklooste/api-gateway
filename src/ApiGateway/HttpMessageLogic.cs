@@ -43,7 +43,23 @@ public class HttpMessageLogic
     /// </summary>
     public static ProxyConfig[] LoadProxyConfig(IConfiguration configuration)
     {
+        var routes = BindProxyConfig(configuration);
+        ValidateAsyncRoutes(routes, configuration);
+        return routes;
+    }
+
+    private static ProxyConfig[] BindProxyConfig(IConfiguration configuration)
+    {
         var raw = configuration.GetSection("proxyConfig").Get<ProxyConfig[]>() ?? throw new ArgumentException("invalid config");
+
+        // "Async": {} has no values, so the binder leaves it null and the route would silently run synchronously.
+        // The JSON provider still lists the key (with a null value), and present at all means opted in, with defaults.
+        for (var i = 0; i < raw.Length; i++)
+        {
+            if (raw[i].Async is null && configuration.GetSection($"proxyConfig:{i}").GetChildren()
+                    .Any(c => c.Key.Equals(nameof(ProxyConfig.Async), StringComparison.OrdinalIgnoreCase)))
+                raw[i] = raw[i] with { Async = new AsyncConfig() };
+        }
         var globalRequired = configuration.GetSection("globalRequiredScopes").Get<string[]>();
 
         // Compile() must run after the global merge: globalRequiredScopes can be the only predicate a
@@ -55,6 +71,47 @@ public class HttpMessageLogic
         {
             AllScopesPredicate = [.. (c.AllScopesPredicate ?? []).Concat(globalRequired).Distinct(StringComparer.Ordinal)]
         }).Compile())];
+    }
+
+    /// <summary>
+    /// Load-time rules for <see cref="ProxyConfig.Async"/> routes. A violation fails the load: the gateway does not
+    /// start, and a reload keeps the previous table. Runs after the <c>globalRequiredScopes</c> merge, so a global
+    /// scope counts as the route's predicate.
+    /// </summary>
+    private static void ValidateAsyncRoutes(ProxyConfig[] routes, IConfiguration configuration)
+    {
+        var maxTimeout = configuration.GetValue<int?>($"{GatewayOptions.SectionName}:async:maxTimeoutSeconds")
+            ?? new GatewayAsyncOptions().MaxTimeoutSeconds;
+        var hasScheduler = !string.IsNullOrEmpty(configuration[$"EndPoints:{SchedulerServiceName}"]);
+        var errors = new List<string>();
+
+        foreach (var route in routes)
+        {
+            if (route.Async is not { } a)
+                continue;
+            void Fail(string why) => errors.Add($"Async route '{route.ApiUrl}' {why}");
+
+            // The job's owner is the caller's userId; a route anyone may call has no owner to check a poll against.
+            if (!route.HasPredicates)
+                Fail("needs a scope predicate (the caller owns the job)");
+            if (route.Cache != null)
+                Fail("cannot also set Cache");
+            if (route.Translate)
+                Fail("cannot also set Translate");
+            if (!string.IsNullOrEmpty(route.ResponsePath))
+                Fail("cannot also set ResponsePath");
+            if (!hasScheduler)
+                Fail($"needs an EndPoints:{SchedulerServiceName} entry");
+            if (a.MaxWaitSeconds is < 0 or > AsyncConfig.WaitCeilingSeconds)
+                Fail($"MaxWaitSeconds must be 0-{AsyncConfig.WaitCeilingSeconds}");
+            if (a.TimeoutSeconds is { } t && (t < 1 || t > maxTimeout))
+                Fail($"TimeoutSeconds must be 1-{maxTimeout} (gateway:async:maxTimeoutSeconds, which mirrors the scheduler's limit)");
+            if (a.ResultTtlSeconds is < 1 or > AsyncConfig.MaxResultTtlSeconds)
+                Fail($"ResultTtlSeconds must be 1-{AsyncConfig.MaxResultTtlSeconds}");
+        }
+
+        if (errors.Count > 0)
+            throw new InvalidOperationException(string.Join("; ", errors));
     }
 
     /// <summary>Handles one gateway request for <paramref name="slug"/> (the path without leading slash).</summary>
@@ -126,6 +183,9 @@ public class HttpMessageLogic
                 url = BuildCacheUrl(upstreamBase, url, configEntry.Cache!);
         }
 
+        if (configEntry.Async is { } asyncConfig)
+            return await ProcessAsyncCall(request, configEntry, asyncConfig, url, userId.ToString(), ct);
+
         var newRequest = await CopyRequest(request, url, headers);
 
         // ResponseHeadersRead: return as soon as the status and headers arrive instead of buffering
@@ -147,6 +207,16 @@ public class HttpMessageLogic
             return StandardError(StatusCodes.Status502BadGateway);
         }
 
+        return await RelayResponse(request, response, configEntry, ct);
+    }
+
+    /// <summary>
+    /// Returns a downstream response to the client: success streams, everything else goes through
+    /// <see cref="ErrorResult"/>. An <see cref="ProxyConfig.Async"/> route's stored result comes through here too,
+    /// so it gets exactly the error mapping a synchronous call would.
+    /// </summary>
+    private async Task<IResult> RelayResponse(HttpRequest request, HttpResponseMessage response, ProxyConfig configEntry, CancellationToken ct)
+    {
         // The response outlives this method on the streaming path, so ownership passes to the
         // request: it is disposed once the response has been written.
         request.HttpContext.Response.RegisterForDispose(response);
@@ -164,6 +234,10 @@ public class HttpMessageLogic
         if (response.Content.Headers.LastModified is { } lastModified)
             request.HttpContext.Response.Headers.LastModified = lastModified.ToString("R");
 
+        // When to ask again: a 202 from the scheduler's result read (the async poll route), a 429 or a 503.
+        if (response.Headers.RetryAfter is { } retryAfter)
+            request.HttpContext.Response.Headers.RetryAfter = retryAfter.ToString();
+
         if (response.IsSuccessStatusCode)
         {
             if (!string.IsNullOrEmpty(configEntry.ResponsePath))
@@ -180,11 +254,186 @@ public class HttpMessageLogic
                 return Results.Bytes(bodyBytes, contentType);
             }
 
-            return Results.Stream(await response.Content.ReadAsStreamAsync(ct), contentType);
+            var stream = Results.Stream(await response.Content.ReadAsStreamAsync(ct), contentType);
+            // A synchronous route answers 200 for any 2xx, as it always has. An async result and the scheduler's poll
+            // route keep the status: there a 202 means "still running", which the client must tell from "done".
+            return configEntry.Async != null || configEntry.ProxyName == SchedulerServiceName
+                ? new WithStatus((int)response.StatusCode, stream)
+                : stream;
         }
 
         return await ErrorResult(response, configEntry, request.Path, contentType, ct);
     }
+
+    /// <summary>
+    /// An <see cref="ProxyConfig.Async"/> call. Matching, authorization, the rewrite, the query overwrite and the header
+    /// copy have run exactly as for a synchronous call; instead of sending the downstream request, it is handed to the
+    /// scheduler under a fresh handle, owned by the caller's <c>userId</c>. With <c>Prefer: wait=N</c> the gateway then
+    /// reads the result for up to N seconds (capped by <see cref="AsyncConfig.MaxWaitSeconds"/>); a finished result
+    /// goes back through <see cref="RelayResponse"/>. Otherwise the client gets <c>202</c>, <c>Retry-After</c> and
+    /// <c>{"handle","state"}</c>, and polls the route table's <c>v1/async/{handle}</c> route.
+    /// </summary>
+    private async Task<IResult> ProcessAsyncCall(HttpRequest request, ProxyConfig configEntry, AsyncConfig asyncConfig,
+        string url, string userId, CancellationToken ct)
+    {
+        // The owner check on every result read compares against this; an anonymous job would be readable by anyone
+        // who is also anonymous. Load-time rules require a predicate, but a predicate need not name the user.
+        if (string.IsNullOrEmpty(userId))
+        {
+            logger.LogWarning("Async route {Path} called without a user id", request.Path);
+            return Results.StatusCode(StatusCodes.Status403Forbidden);
+        }
+
+        var downstreamBase = proxy.GetEndpointUrl(configEntry.ProxyName)
+            ?? throw new InvalidOperationException($"No EndPoint registered for ProxyName '{configEntry.ProxyName}'");
+        var destination = $"{downstreamBase.TrimEnd('/')}/{url.TrimStart('/')}";
+
+        // UUIDv4: 122 random bits, so a handle cannot be guessed. Never taken from the client: a chosen key would let
+        // one caller probe whether another's job exists (the owner check covers the result, not the key).
+        var handle = Guid.NewGuid().ToString();
+
+        var enqueue = await CopyRequest(request, BuildEnqueueUrl(destination, request.Method, handle, userId, asyncConfig), _options.Headers);
+        enqueue.Method = HttpMethod.Post;
+        // Addressed to the gateway, not the downstream.
+        enqueue.Headers.Remove("Prefer");
+        // The scheduler stores the body and content type but not Content-Encoding, so a compressed body would come back unreadable.
+        enqueue.Headers.Remove("Accept-Encoding");
+        // A job can run more than once (a worker that dies is re-run), so the downstream must be idempotent on this key.
+        enqueue.Headers.TryAddWithoutValidation(IdempotencyKeyHeader, handle);
+
+        var scheduler = proxy.GetHttpClient(SchedulerServiceName);
+        try
+        {
+            using var enqueued = await scheduler.SendAsync(enqueue, ct);
+            if (!enqueued.IsSuccessStatusCode)
+            {
+                logger.LogError("Scheduler refused async job for {Path}: {Status} {Body}", request.Path,
+                    (int)enqueued.StatusCode, await enqueued.Content.ReadAsStringAsync(ct));
+                return StandardError(StatusCodes.Status502BadGateway);
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError(ex, "Scheduler unreachable for async {Path}", request.Path);
+            return StandardError(StatusCodes.Status502BadGateway);
+        }
+
+        var wait = Math.Min(PreferredWaitSeconds(request.Headers["Prefer"]) ?? 0, asyncConfig.MaxWaitSeconds);
+        if (wait <= 0)
+            return AsyncAccepted(request, handle, EnqueuedState);
+
+        HttpResponseMessage result;
+        try
+        {
+            var resultUrl = $"v1/jobs/{handle}/result?userId={Uri.EscapeDataString(userId)}&wait={wait}";
+            result = await scheduler.SendAsync(new HttpRequestMessage(HttpMethod.Get, resultUrl), HttpCompletionOption.ResponseHeadersRead, ct);
+        }
+        catch (HttpRequestException ex)
+        {
+            // The job is queued; only the wait failed. The client can still poll for it.
+            logger.LogWarning(ex, "Scheduler result read failed for async {Path}; returning the handle", request.Path);
+            return AsyncAccepted(request, handle, EnqueuedState);
+        }
+        request.HttpContext.Response.RegisterForDispose(result);
+
+        var jobState = result.Headers.TryGetValues(JobStateHeader, out var states) ? states.FirstOrDefault() : null;
+        if (jobState == CompletedState)
+            return await RelayResponse(request, result, configEntry, ct);
+
+        if (result.StatusCode == HttpStatusCode.Accepted)
+            return AsyncAccepted(request, handle, await ReadState(result, ct) ?? EnqueuedState);
+
+        // Failed (Timeout, ConnectionError, ResultTooLarge) or anything unexpected: logged, never relayed.
+        logger.LogWarning("Async job {Handle} for {Path} ended {State} ({Status}): {Body}", handle, request.Path,
+            jobState, (int)result.StatusCode, await result.Content.ReadAsStringAsync(ct));
+        return StandardError(StatusCodes.Status502BadGateway);
+    }
+
+    /// <summary>
+    /// The scheduler's enqueue call for an async job. <c>destinationUrl</c> is encoded twice: the scheduler URL-decodes
+    /// the already-bound query value once more, so a once-encoded URL would lose its own escapes (a <c>%2B</c> in the
+    /// downstream query would arrive as a space).
+    /// </summary>
+    internal static string BuildEnqueueUrl(string destination, string method, string handle, string owner, AsyncConfig asyncConfig)
+    {
+        var sb = new System.Text.StringBuilder("v1/jobs/http/enqueue?destinationUrl=")
+            .Append(Uri.EscapeDataString(Uri.EscapeDataString(destination)))
+            .Append("&method=").Append(Uri.EscapeDataString(method))
+            .Append("&jobKey=").Append(handle)
+            .Append("&owner=").Append(Uri.EscapeDataString(owner))
+            .Append("&keepResult=true&resultTtl=").Append(asyncConfig.ResultTtlSeconds)
+            .Append("&queue=async");
+        if (asyncConfig.TimeoutSeconds is { } timeout)
+            sb.Append("&timeout=").Append(timeout);
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The <c>wait</c> preference of an RFC 7240 <c>Prefer</c> header (<c>Prefer: respond-async, wait=10</c>), capped at
+    /// <see cref="AsyncConfig.WaitCeilingSeconds"/>; null when there is none or it does not parse.
+    /// </summary>
+    internal static int? PreferredWaitSeconds(StringValues prefer)
+    {
+        foreach (var value in prefer)
+        {
+            if (value is null)
+                continue;
+            foreach (var preference in value.Split([',', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                var kv = preference.Split('=', 2, StringSplitOptions.TrimEntries);
+                if (kv.Length == 2 && kv[0].Equals("wait", StringComparison.OrdinalIgnoreCase)
+                    && int.TryParse(kv[1].Trim('"'), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var seconds))
+                    return Math.Min(seconds, AsyncConfig.WaitCeilingSeconds);
+            }
+        }
+        return null;
+    }
+
+    private static IResult AsyncAccepted(HttpRequest request, string handle, string state)
+    {
+        request.HttpContext.Response.Headers.RetryAfter = AsyncRetryAfterSeconds;
+        return Results.Json(new AsyncHandle(handle, state), GatewayJson.IgnoreDefault, statusCode: StatusCodes.Status202Accepted);
+    }
+
+    /// <summary>The <c>state</c> of the scheduler's 202 body, <c>{"handle","state"}</c>.</summary>
+    private static async Task<string?> ReadState(HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct), cancellationToken: ct);
+            return doc.RootElement.TryGetProperty("state", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString() : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Runs <paramref name="inner"/> with <paramref name="status"/> as the response status.</summary>
+    private sealed class WithStatus(int status, IResult inner) : IResult
+    {
+        public Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.StatusCode = status;
+            return inner.ExecuteAsync(httpContext);
+        }
+    }
+
+    /// <summary>The 202 body of an <see cref="ProxyConfig.Async"/> call: poll <c>v1/async/{handle}</c>.</summary>
+    public sealed record AsyncHandle(string Handle, string State);
+
+    /// <summary><c>EndPoints</c> key of the scheduler (async-scheduler) that <see cref="ProxyConfig.Async"/> routes hand calls to.</summary>
+    public const string SchedulerServiceName = "scheduler";
+
+    /// <summary>Sent with an async job so the downstream can recognise a re-run of the same call.</summary>
+    public const string IdempotencyKeyHeader = "Idempotency-Key";
+
+    /// <summary>The scheduler's header saying whether a stored result is the downstream's (<c>Completed</c>) or its own failure.</summary>
+    public const string JobStateHeader = "X-Job-State";
+
+    private const string CompletedState = "Completed";
+    private const string EnqueuedState = "Enqueued";
+    private const string AsyncRetryAfterSeconds = "1";
 
     /// <summary>ProblemDetails extension carrying the error key clients translate.</summary>
     public const string ErrorCodeExtension = "code";
