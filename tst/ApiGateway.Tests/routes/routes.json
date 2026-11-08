@@ -29,6 +29,19 @@
     },
     {
       "ProxyName": "upstream",
+      "ApiUrl": "v1/navdir",
+      "ProxyUrl": "v1/navdir",
+      "AnyScopesPredicate": [
+        "events-r"
+      ],
+      "Cache": {
+        "CacheVars": [
+          "brand"
+        ]
+      }
+    },
+    {
+      "ProxyName": "upstream",
       "ApiUrl": "v1/reports/{id}",
       "ProxyUrl": "v1/report/{id}",
       "Method": "POST",
