@@ -55,18 +55,27 @@ public class CacheIntegrationTests : IAsyncLifetime
         return ValueTask.CompletedTask;
     }
 
-    /// <summary>Registers a MockServer expectation returning <paramref name="body"/> for a path.</summary>
-    private async Task ExpectUpstream(string path, string body) =>
+    /// <summary>
+    /// Registers a MockServer expectation returning <paramref name="body"/> for a path, optionally with a
+    /// <paramref name="cacheControl"/> response header the cache container reads to resolve its TTL.
+    /// </summary>
+    private async Task ExpectUpstream(string path, string body, string? cacheControl = null)
+    {
+        var headers = new Dictionary<string, string[]> { ["Content-Type"] = ["application/json"] };
+        if (cacheControl is not null)
+            headers["Cache-Control"] = [cacheControl];
+
         (await mockServer.PutAsJsonAsync("/mockserver/expectation", new
         {
             httpRequest = new { path },
             httpResponse = new
             {
                 statusCode = 200,
-                headers = new Dictionary<string, string[]> { ["Content-Type"] = ["application/json"] },
+                headers,
                 body
             }
         }, Ct)).EnsureSuccessStatusCode();
+    }
 
     /// <summary>How many requests MockServer has received for a path.</summary>
     private async Task<int> UpstreamHits(string path)
@@ -134,6 +143,37 @@ public class CacheIntegrationTests : IAsyncLifetime
 
         // The second response came from the cache container, not the upstream.
         Assert.Equal(1, await UpstreamHits("/upstream/v1/nav"));
+    }
+
+    [Fact]
+    public async Task A_route_without_a_TtlSeconds_honours_the_upstream_max_age()
+    {
+        // v1/navdir has a Cache block but no TtlSeconds, so the cache container resolves its TTL from the
+        // upstream's Cache-Control. This is the mechanism offer-offering's /v1/event/nav relies on: it emits
+        // max-age itself rather than letting the route pin a horizon.
+        await ExpectUpstream("/upstream/v1/navdir", """{"nav":"first"}""", cacheControl: "max-age=60");
+
+        var first = await gateway.SendAsync(Get("/v1/navdir?brand=testbrand"), Ct);
+        var second = await gateway.SendAsync(Get("/v1/navdir?brand=testbrand"), Ct);
+
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal(await first.Content.ReadAsStringAsync(Ct), await second.Content.ReadAsStringAsync(Ct));
+
+        // The upstream max-age cached it, so the second request did not reach the upstream.
+        Assert.Equal(1, await UpstreamHits("/upstream/v1/navdir"));
+    }
+
+    [Fact]
+    public async Task An_upstream_no_store_prevents_caching_even_on_a_cache_route()
+    {
+        // The same route, but the upstream says no-store (offer-offering emits this when a filtered nav is
+        // empty). Despite the Cache block, nothing is cached and every request reaches the upstream.
+        await ExpectUpstream("/upstream/v1/navdir", """{"nav":"first"}""", cacheControl: "no-store");
+
+        await gateway.SendAsync(Get("/v1/navdir?brand=testbrand"), Ct);
+        await gateway.SendAsync(Get("/v1/navdir?brand=testbrand"), Ct);
+
+        Assert.Equal(2, await UpstreamHits("/upstream/v1/navdir"));
     }
 
     [Fact]
